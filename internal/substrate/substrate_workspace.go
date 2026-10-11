@@ -1,7 +1,7 @@
-package shepherd
+package substrate
 
 // WorkspaceSubstrate (plan 03 §3, Go-native bridge): a Substrate over a
-// Sandbox, so recorded intents can actually reach a workspace (git or
+// sandbox.Sandbox, so recorded intents can actually reach a workspace (git or
 // containerd) through the same declare -> capture rhythm as the kernel.
 //
 // This substrate has no Python counterpart — it is the deliberate Go-native
@@ -20,10 +20,10 @@ package shepherd
 // caused it.
 //
 // workspace.file.delete.v1 is deliberately NOT in the vocabulary (recorded
-// decision): the Sandbox contract has no delete operation, and the only
+// decision): the sandbox.Sandbox contract has no delete operation, and the only
 // thing WriteFile could do — truncate to empty — is not a delete. Recording
 // "delete applied" over a truncation would write a trace that lies about
-// the world. When the Sandbox interface grows a real delete (a
+// the world. When the sandbox.Sandbox interface grows a real delete (a
 // yaah-coordinated change), the schema can light up without breaking
 // anything: dispatch selects on declaration schema, so an unknown schema
 // already fails loudly as unsupported.
@@ -36,6 +36,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"io/fs"
 	"time"
 )
@@ -55,18 +57,18 @@ const (
 	SchemaWorkspaceExecApplied = "workspace.exec.applied.v1"
 )
 
-// WorkspaceSubstrate materializes file and exec intents into a Sandbox.
+// WorkspaceSubstrate materializes file and exec intents into a sandbox.Sandbox.
 type WorkspaceSubstrate struct {
-	sandbox Sandbox
+	sandbox sandbox.Sandbox
 }
 
-// NewWorkspaceSubstrate bridges a Sandbox into the substrate contract.
-func NewWorkspaceSubstrate(sb Sandbox) *WorkspaceSubstrate {
+// NewWorkspaceSubstrate bridges a sandbox.Sandbox into the substrate contract.
+func NewWorkspaceSubstrate(sb sandbox.Sandbox) *WorkspaceSubstrate {
 	return &WorkspaceSubstrate{sandbox: sb}
 }
 
-// Sandbox returns the bridged sandbox.
-func (w *WorkspaceSubstrate) Sandbox() Sandbox { return w.sandbox }
+// sandbox.Sandbox returns the bridged sandbox.
+func (w *WorkspaceSubstrate) Sandbox() sandbox.Sandbox { return w.sandbox }
 
 func (w *WorkspaceSubstrate) SubstrateRef() string { return WorkspaceSubstrateRef }
 
@@ -78,9 +80,9 @@ func (w *WorkspaceSubstrate) CaptureSchemas() []string {
 	return []string{SchemaWorkspaceFileWriteApplied, SchemaWorkspaceExecApplied}
 }
 
-// Containment reports what the bridged sandbox claims, so the witness tells
+// trace.Containment reports what the bridged sandbox claims, so the witness tells
 // the truth about git-in-place (uncontained) versus isolated backends.
-func (w *WorkspaceSubstrate) Containment() Containment {
+func (w *WorkspaceSubstrate) Containment() trace.Containment {
 	return w.sandbox.Capabilities().Containment
 }
 
@@ -106,7 +108,7 @@ func (w *WorkspaceSubstrate) Containment() Containment {
 // code: the exit code is the observed result, recorded in the capture. Only
 // infrastructure failures (the command could not run, a write failed) are
 // substrate failures.
-func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []Record) (MaterializationResult, error) {
+func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Record) (trace.MaterializationResult, error) {
 	caps := w.sandbox.Capabilities()
 
 	needsFileIO, needsExec := false, false
@@ -119,19 +121,19 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []Record) 
 		}
 	}
 	if needsFileIO && !caps.FileIO {
-		return MaterializationResult{
-			Outcome:       MaterializationCleanFailure,
+		return trace.MaterializationResult{
+			Outcome:       trace.MaterializationCleanFailure,
 			FailureReason: fmt.Sprintf("sandbox backend %q does not support file IO", w.sandbox.Backend()),
 		}, nil
 	}
 	if needsExec && !caps.Exec {
-		return MaterializationResult{
-			Outcome:       MaterializationCleanFailure,
+		return trace.MaterializationResult{
+			Outcome:       trace.MaterializationCleanFailure,
 			FailureReason: fmt.Sprintf("sandbox backend %q does not support exec", w.sandbox.Backend()),
 		}, nil
 	}
 
-	captures := make([]RecordDraft, 0, len(records))
+	captures := make([]trace.RecordDraft, 0, len(records))
 	anchors := make([]map[string]any, 0, len(records))
 	for _, record := range records {
 		switch record.Envelope.SchemaRef {
@@ -155,8 +157,8 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []Record) 
 			}), nil
 		}
 	}
-	return MaterializationResult{
-		Outcome:          MaterializationSuccess,
+	return trace.MaterializationResult{
+		Outcome:          trace.MaterializationSuccess,
 		CaptureDrafts:    captures,
 		WorldSideAnchors: anchors,
 	}, nil
@@ -179,18 +181,18 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []Record) 
 // when nothing else landed either. The landed records keep their anchors as
 // well as their captures, so the receipt describes both halves of what
 // landed.
-func splitOrClean(captures []RecordDraft, anchors []map[string]any, failed Record, err error) MaterializationResult {
+func splitOrClean(captures []trace.RecordDraft, anchors []map[string]any, failed trace.Record, err error) trace.MaterializationResult {
 	reason := fmt.Sprintf("record %s: %v", failed.Envelope.RecordID, err)
 	var world *worldTouchedError
 	if len(captures) > 0 || errors.As(err, &world) {
-		return MaterializationResult{
-			Outcome:          MaterializationSplitState,
+		return trace.MaterializationResult{
+			Outcome:          trace.MaterializationSplitState,
 			CaptureDrafts:    captures,
 			WorldSideAnchors: anchors,
 			FailureReason:    reason,
 		}
 	}
-	return MaterializationResult{Outcome: MaterializationCleanFailure, FailureReason: reason}
+	return trace.MaterializationResult{Outcome: trace.MaterializationCleanFailure, FailureReason: reason}
 }
 
 // worldTouchedError marks a failure that occurred after a sandbox call was
@@ -201,42 +203,42 @@ type worldTouchedError struct{ err error }
 func (e *worldTouchedError) Error() string { return e.err.Error() }
 func (e *worldTouchedError) Unwrap() error { return e.err }
 
-func (w *WorkspaceSubstrate) applyWrite(ctx context.Context, record Record) (RecordDraft, map[string]any, error) {
+func (w *WorkspaceSubstrate) applyWrite(ctx context.Context, record trace.Record) (trace.RecordDraft, map[string]any, error) {
 	path, _ := record.Body.Payload["path"].(string)
 	if path == "" {
-		return RecordDraft{}, nil, &SubstrateError{"workspace file write requires a non-empty path"}
+		return trace.RecordDraft{}, nil, &SubstrateError{"workspace file write requires a non-empty path"}
 	}
 	contentB64, ok := record.Body.Payload["content_b64"]
 	if !ok {
-		return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q requires content_b64", path)}
+		return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q requires content_b64", path)}
 	}
 	contentB64String, ok := contentB64.(string)
 	if !ok {
-		return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: content_b64 must be a base64 string", path)}
+		return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: content_b64 must be a base64 string", path)}
 	}
 	// An empty string is the encoding of empty content: a write may create an
 	// empty file, and rejecting it would make that intent inexpressible.
 	content, err := base64.StdEncoding.DecodeString(contentB64String)
 	if err != nil {
-		return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: content_b64 is not valid base64", path)}
+		return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: content_b64 is not valid base64", path)}
 	}
 	perm := fs.FileMode(0o644)
 	if raw, ok := record.Body.Payload["perm"]; ok {
 		perm, err = fileModeFromPayload(raw)
 		if err != nil {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: %v", path, err)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace file write %q: %v", path, err)}
 		}
 	}
 
 	if err := w.sandbox.WriteFile(ctx, path, content, perm); err != nil {
 		// The write may have partially landed (chunked shellouts), so this
 		// is a world-touched failure: splitOrClean reports split_state.
-		return RecordDraft{}, nil, &worldTouchedError{fmt.Errorf("write %q: %w", path, err)}
+		return trace.RecordDraft{}, nil, &worldTouchedError{fmt.Errorf("write %q: %w", path, err)}
 	}
 
 	sum := sha256.Sum256(content)
-	draft := RecordDraft{
-		Mode:            Capture,
+	draft := trace.RecordDraft{
+		Mode:            trace.Capture,
 		SchemaRef:       SchemaWorkspaceFileWriteApplied,
 		KindLabel:       "workspace_file_write_applied",
 		Payload:         map[string]any{"path": path, "digest": hex.EncodeToString(sum[:])},
@@ -251,46 +253,46 @@ func (w *WorkspaceSubstrate) applyWrite(ctx context.Context, record Record) (Rec
 	return draft, anchor, nil
 }
 
-func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record Record) (RecordDraft, map[string]any, error) {
+func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record trace.Record) (trace.RecordDraft, map[string]any, error) {
 	command, _ := record.Body.Payload["command"].(string)
 	if command == "" {
-		return RecordDraft{}, nil, &SubstrateError{"workspace exec requires a command"}
+		return trace.RecordDraft{}, nil, &SubstrateError{"workspace exec requires a command"}
 	}
-	req := ExecRequest{Command: command}
+	req := sandbox.ExecRequest{Command: command}
 	if raw, ok := record.Body.Payload["args"]; ok {
 		args, err := stringSliceFromPayload(raw, "args")
 		if err != nil {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
 		}
 		req.Args = args
 	}
 	if raw, ok := record.Body.Payload["cwd"]; ok {
 		cwd, ok := raw.(string)
 		if !ok {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: cwd must be a string", command)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: cwd must be a string", command)}
 		}
 		req.Cwd = cwd
 	}
 	if raw, ok := record.Body.Payload["env"]; ok {
 		env, err := stringMapFromPayload(raw, "env")
 		if err != nil {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
 		}
 		req.Env = env
 	}
 	if raw, ok := record.Body.Payload["timeout_ms"]; ok {
 		ms, err := payloadInt(raw, "timeout_ms")
 		if err != nil {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: %v", command, err)}
 		}
 		if ms < 0 {
-			return RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: timeout_ms must be non-negative", command)}
+			return trace.RecordDraft{}, nil, &SubstrateError{fmt.Sprintf("workspace exec %q: timeout_ms must be non-negative", command)}
 		}
 		req.Timeout = time.Duration(ms) * time.Millisecond
 	}
 	// The declared timeout is enforced here rather than delegated: a sandbox
 	// backend is only required to honor the context it is given, and the
-	// containerd backend observes ctx without reading ExecRequest.Timeout.
+	// containerd backend observes ctx without reading sandbox.ExecRequest.Timeout.
 	// Deriving a deadline-bearing context makes the declaration mean the
 	// same thing for every backend.
 	if req.Timeout > 0 {
@@ -304,13 +306,13 @@ func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record Record) (Reco
 		// The command may have run to completion and failed during teardown,
 		// so this is a world-touched failure: splitOrClean reports
 		// split_state.
-		return RecordDraft{}, nil, &worldTouchedError{fmt.Errorf("exec %q: %w", command, err)}
+		return trace.RecordDraft{}, nil, &worldTouchedError{fmt.Errorf("exec %q: %w", command, err)}
 	}
 
 	stdoutSum := sha256.Sum256([]byte(result.Stdout))
 	stderrSum := sha256.Sum256([]byte(result.Stderr))
-	draft := RecordDraft{
-		Mode:      Capture,
+	draft := trace.RecordDraft{
+		Mode:      trace.Capture,
 		SchemaRef: SchemaWorkspaceExecApplied,
 		KindLabel: "workspace_exec_applied",
 		Payload: map[string]any{

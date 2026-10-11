@@ -1,4 +1,4 @@
-package shepherd
+package substrate
 
 // Substrate contract tests (plan 03 §4): registry behavior, the echo
 // declaration->capture pairing, KV payload validation, and the
@@ -13,10 +13,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -71,12 +74,12 @@ func TestSubstrateRegistryUnknownSubstrate(t *testing.T) {
 // pin that the registry fails closed instead.
 type nonComparableSubstrate struct{ seen map[string]bool }
 
-func (n nonComparableSubstrate) SubstrateRef() string         { return "test.noncomparable.v1" }
-func (n nonComparableSubstrate) DeclarationSchemas() []string { return nil }
-func (n nonComparableSubstrate) CaptureSchemas() []string     { return nil }
-func (n nonComparableSubstrate) Containment() Containment     { return ContainContained }
-func (n nonComparableSubstrate) Materialize(context.Context, []Record) (MaterializationResult, error) {
-	return MaterializationResult{}, nil
+func (n nonComparableSubstrate) SubstrateRef() string           { return "test.noncomparable.v1" }
+func (n nonComparableSubstrate) DeclarationSchemas() []string   { return nil }
+func (n nonComparableSubstrate) CaptureSchemas() []string       { return nil }
+func (n nonComparableSubstrate) Containment() trace.Containment { return trace.ContainContained }
+func (n nonComparableSubstrate) Materialize(context.Context, []trace.Record) (trace.MaterializationResult, error) {
+	return trace.MaterializationResult{}, nil
 }
 
 func TestSubstrateRegistryNonComparableFailsClosed(t *testing.T) {
@@ -99,30 +102,30 @@ func TestEchoSubstratePairsDeclarationsWithCaptures(t *testing.T) {
 	if echo.SubstrateRef() != "test.echo.v1" {
 		t.Errorf("ref = %q", echo.SubstrateRef())
 	}
-	if echo.Containment() != ContainContained {
+	if echo.Containment() != trace.ContainContained {
 		t.Errorf("containment = %q, want contained (Python dataclass default)", echo.Containment())
 	}
 	if !reflect.DeepEqual(echo.CaptureSchemas(), echo.DeclarationSchemas()) {
 		t.Errorf("echo capture schemas = %v, want same as declarations %v", echo.CaptureSchemas(), echo.DeclarationSchemas())
 	}
 
-	records := []Record{{
-		Envelope: RecordEnvelope{RecordID: "sha256:decl", SchemaRef: "example.write.v1", Mode: Declaration},
-		Body:     RecordBody{Payload: map[string]any{"path": "note.txt", "text": "hello"}},
-		View:     &RecordView{KindLabel: "write"},
+	records := []trace.Record{{
+		Envelope: trace.RecordEnvelope{RecordID: "sha256:decl", SchemaRef: "example.write.v1", Mode: trace.Declaration},
+		Body:     trace.RecordBody{Payload: map[string]any{"path": "note.txt", "text": "hello"}},
+		View:     &trace.RecordView{KindLabel: "write"},
 	}}
 	result, err := echo.Materialize(context.Background(), records)
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSuccess {
+	if result.Outcome != trace.MaterializationSuccess {
 		t.Errorf("outcome = %q, want success", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 1 {
 		t.Fatalf("drafts = %d, want 1", len(result.CaptureDrafts))
 	}
 	draft := result.CaptureDrafts[0]
-	if draft.Mode != Capture || draft.SchemaRef != "example.write.v1" || draft.KindLabel != "write" {
+	if draft.Mode != trace.Capture || draft.SchemaRef != "example.write.v1" || draft.KindLabel != "write" {
 		t.Errorf("draft = %+v", draft)
 	}
 	if !reflect.DeepEqual(draft.CausedByFactIDs, []string{"sha256:decl"}) {
@@ -154,14 +157,14 @@ func TestKVSubstratePayloadValidation(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		record Record
+		record trace.Record
 	}{
-		{"missing key", Record{Body: RecordBody{Payload: map[string]any{"value": jsonNumber(t, 1)}}}},
-		{"non-string key", Record{Body: RecordBody{Payload: map[string]any{"key": jsonNumber(t, 5), "value": jsonNumber(t, 1)}}}},
-		{"missing value", Record{Body: RecordBody{Payload: map[string]any{"key": "k"}}}},
+		{"missing key", trace.Record{Body: trace.RecordBody{Payload: map[string]any{"value": jsonNumber(t, 1)}}}},
+		{"non-string key", trace.Record{Body: trace.RecordBody{Payload: map[string]any{"key": jsonNumber(t, 5), "value": jsonNumber(t, 1)}}}},
+		{"missing value", trace.Record{Body: trace.RecordBody{Payload: map[string]any{"key": "k"}}}},
 	}
 	for _, tc := range cases {
-		_, err := kv.Materialize(context.Background(), []Record{tc.record})
+		_, err := kv.Materialize(context.Background(), []trace.Record{tc.record})
 		if err == nil {
 			t.Errorf("%s: materialize succeeded, want error", tc.name)
 			continue
@@ -181,14 +184,14 @@ func TestKVSubstrateUpsertAndRoundTrip(t *testing.T) {
 
 	apply := func(key string, value any) {
 		t.Helper()
-		result, err := kv.Materialize(context.Background(), []Record{{
-			Envelope: RecordEnvelope{RecordID: "sha256:" + key, Mode: Declaration},
-			Body:     RecordBody{Payload: map[string]any{"key": key, "value": value}},
+		result, err := kv.Materialize(context.Background(), []trace.Record{{
+			Envelope: trace.RecordEnvelope{RecordID: "sha256:" + key, Mode: trace.Declaration},
+			Body:     trace.RecordBody{Payload: map[string]any{"key": key, "value": value}},
 		}})
 		if err != nil {
 			t.Fatalf("materialize %q: %v", key, err)
 		}
-		if result.Outcome != MaterializationSuccess || len(result.CaptureDrafts) != 1 {
+		if result.Outcome != trace.MaterializationSuccess || len(result.CaptureDrafts) != 1 {
 			t.Fatalf("result = %+v", result)
 		}
 	}
@@ -219,16 +222,16 @@ func TestKVSubstrateUpsertAndRoundTrip(t *testing.T) {
 
 // --- workspace substrate ---
 
-// fakeSandbox is an in-memory Sandbox for capability-gating tests. It is
+// fakeSandbox is an in-memory sandbox.Sandbox for capability-gating tests. It is
 // deliberately configurable in its capabilities so the same fake covers the
 // full-matrix backend and the diff-only backend.
 type fakeSandbox struct {
 	backend string
-	caps    SandboxCapabilities
+	caps    sandbox.SandboxCapabilities
 	files   map[string][]byte
-	execs   []ExecRequest
+	execs   []sandbox.ExecRequest
 	// execResult is returned for every Exec call.
-	execResult ExecResult
+	execResult sandbox.ExecResult
 	// writeErr, when set, fails every WriteFile call.
 	writeErr error
 	// writeHook, when set, can fail individual writes by path.
@@ -239,19 +242,19 @@ type fakeSandbox struct {
 }
 
 func (f *fakeSandbox) Backend() string { return f.backend }
-func (f *fakeSandbox) Capabilities() SandboxCapabilities {
+func (f *fakeSandbox) Capabilities() sandbox.SandboxCapabilities {
 	return f.caps
 }
-func (f *fakeSandbox) Create(context.Context, SandboxSpec) error { return nil }
-func (f *fakeSandbox) Destroy(context.Context) error             { return nil }
-func (f *fakeSandbox) Capture(context.Context) (WorkspaceState, error) {
-	return WorkspaceState{Backend: f.backend}, nil
+func (f *fakeSandbox) Create(context.Context, sandbox.SandboxSpec) error { return nil }
+func (f *fakeSandbox) Destroy(context.Context) error                     { return nil }
+func (f *fakeSandbox) Capture(context.Context) (trace.WorkspaceState, error) {
+	return trace.WorkspaceState{Backend: f.backend}, nil
 }
-func (f *fakeSandbox) Apply(context.Context, WorkspaceState) error { return nil }
-func (f *fakeSandbox) Diff(context.Context, WorkspaceState, int) (string, []string, error) {
+func (f *fakeSandbox) Apply(context.Context, trace.WorkspaceState) error { return nil }
+func (f *fakeSandbox) Diff(context.Context, trace.WorkspaceState, int) (string, []string, error) {
 	return "", nil, nil
 }
-func (f *fakeSandbox) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+func (f *fakeSandbox) Exec(ctx context.Context, req sandbox.ExecRequest) (sandbox.ExecResult, error) {
 	f.execs = append(f.execs, req)
 	_, hasDeadline := ctx.Deadline()
 	f.execDeadlines = append(f.execDeadlines, hasDeadline)
@@ -279,23 +282,23 @@ func (f *fakeSandbox) WriteFile(_ context.Context, path string, data []byte, _ f
 func fullCapsFake() *fakeSandbox {
 	return &fakeSandbox{
 		backend: "fake",
-		caps: SandboxCapabilities{
+		caps: sandbox.SandboxCapabilities{
 			Lifecycle:   true,
 			Exec:        true,
 			FileIO:      true,
 			Diff:        true,
 			Isolated:    true,
-			Containment: ContainFull,
+			Containment: trace.ContainFull,
 		},
 		files: map[string][]byte{},
 	}
 }
 
-func workspaceDecl(schema, id string, payload map[string]any) Record {
-	return Record{
-		Envelope: RecordEnvelope{RecordID: id, SchemaRef: schema, Mode: Declaration},
-		Body:     RecordBody{Payload: payload},
-		View:     &RecordView{KindLabel: "decl"},
+func workspaceDecl(schema, id string, payload map[string]any) trace.Record {
+	return trace.Record{
+		Envelope: trace.RecordEnvelope{RecordID: id, SchemaRef: schema, Mode: trace.Declaration},
+		Body:     trace.RecordBody{Payload: payload},
+		View:     &trace.RecordView{KindLabel: "decl"},
 	}
 }
 
@@ -304,17 +307,17 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 	// fail cleanly — nothing applied, no captures, no partial append.
 	gitLike := &fakeSandbox{
 		backend: "git",
-		caps: SandboxCapabilities{
+		caps: sandbox.SandboxCapabilities{
 			Diff:        true,
 			Isolated:    false,
-			Containment: ContainUncontained,
+			Containment: trace.ContainUncontained,
 		},
 		files: map[string][]byte{},
 	}
 	ws := NewWorkspaceSubstrate(gitLike)
 
 	content := base64.StdEncoding.EncodeToString([]byte("hello"))
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:w1", map[string]any{
 			"path": "note.txt", "content_b64": content,
 		}),
@@ -322,7 +325,7 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationCleanFailure {
+	if result.Outcome != trace.MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure", result.Outcome)
 	}
 	if result.FailureReason == "" {
@@ -336,13 +339,13 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 	}
 
 	// Same for exec on a backend without it.
-	result, err = ws.Materialize(context.Background(), []Record{
+	result, err = ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceExec, "sha256:e1", map[string]any{"command": "ls"}),
 	})
 	if err != nil {
 		t.Fatalf("materialize exec: %v", err)
 	}
-	if result.Outcome != MaterializationCleanFailure || len(result.CaptureDrafts) != 0 {
+	if result.Outcome != trace.MaterializationCleanFailure || len(result.CaptureDrafts) != 0 {
 		t.Errorf("result = %+v, want clean_failure with no captures", result)
 	}
 	if len(gitLike.execs) != 0 {
@@ -353,12 +356,12 @@ func TestWorkspaceSubstrateCapabilityGatingFailsCleanly(t *testing.T) {
 func TestWorkspaceSubstrateRoundTripsFileWrites(t *testing.T) {
 	sb := fullCapsFake()
 	ws := NewWorkspaceSubstrate(sb)
-	if ws.Containment() != ContainFull {
+	if ws.Containment() != trace.ContainFull {
 		t.Errorf("containment = %q, want the sandbox's own (full)", ws.Containment())
 	}
 
 	content := "hello, workspace"
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:w1", map[string]any{
 			"path":        "notes/greeting.txt",
 			"content_b64": base64.StdEncoding.EncodeToString([]byte(content)),
@@ -368,7 +371,7 @@ func TestWorkspaceSubstrateRoundTripsFileWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSuccess {
+	if result.Outcome != trace.MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success (%s)", result.Outcome, result.FailureReason)
 	}
 	if len(result.CaptureDrafts) != 1 {
@@ -384,7 +387,7 @@ func TestWorkspaceSubstrateRoundTripsFileWrites(t *testing.T) {
 	}
 
 	draft := result.CaptureDrafts[0]
-	if draft.SchemaRef != SchemaWorkspaceFileWriteApplied || draft.Mode != Capture {
+	if draft.SchemaRef != SchemaWorkspaceFileWriteApplied || draft.Mode != trace.Capture {
 		t.Errorf("draft = %+v", draft)
 	}
 	if draft.Payload["path"] != "notes/greeting.txt" {
@@ -415,7 +418,7 @@ func TestWorkspaceSubstrateWritesEmptyFile(t *testing.T) {
 	sb := fullCapsFake()
 	ws := NewWorkspaceSubstrate(sb)
 
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:empty", map[string]any{
 			"path":        "empty.txt",
 			"content_b64": "",
@@ -424,7 +427,7 @@ func TestWorkspaceSubstrateWritesEmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSuccess {
+	if result.Outcome != trace.MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success (%s)", result.Outcome, result.FailureReason)
 	}
 	got, err := sb.ReadFile(context.Background(), "empty.txt")
@@ -441,13 +444,13 @@ func TestWorkspaceSubstrateWritesEmptyFile(t *testing.T) {
 
 func TestWorkspaceSubstrateRecordsExecOutcome(t *testing.T) {
 	sb := fullCapsFake()
-	sb.execResult = ExecResult{ExitCode: 3, Stdout: "out", Stderr: "err"}
+	sb.execResult = sandbox.ExecResult{ExitCode: 3, Stdout: "out", Stderr: "err"}
 	ws := NewWorkspaceSubstrate(sb)
 
 	// A nonzero exit code is an observed result, not a substrate failure.
 	// An empty-string argument is a legitimate argument, not a malformed
 	// entry; only non-strings are rejected.
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceExec, "sha256:e1", map[string]any{
 			"command":    "grep",
 			"args":       []any{"-c", "needle", ""},
@@ -458,7 +461,7 @@ func TestWorkspaceSubstrateRecordsExecOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSuccess {
+	if result.Outcome != trace.MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success even with a nonzero exit code", result.Outcome)
 	}
 	if len(sb.execs) != 1 {
@@ -470,7 +473,7 @@ func TestWorkspaceSubstrateRecordsExecOutcome(t *testing.T) {
 	}
 	// The declared timeout is enforced by the substrate via the context, so
 	// it reaches every backend regardless of whether the backend reads
-	// ExecRequest.Timeout itself (the containerd backend does not).
+	// sandbox.ExecRequest.Timeout itself (the containerd backend does not).
 	if len(sb.execDeadlines) != 1 || !sb.execDeadlines[0] {
 		t.Errorf("exec ctx deadlines = %v, want one deadline from timeout_ms=500", sb.execDeadlines)
 	}
@@ -502,7 +505,7 @@ func TestWorkspaceSubstrateWorldTouchedFailureIsSplitState(t *testing.T) {
 	sb.writeErr = errors.New("disk full")
 	ws := NewWorkspaceSubstrate(sb)
 
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:ok1", map[string]any{
 			"path": "one.txt", "content_b64": base64.StdEncoding.EncodeToString([]byte("1")),
 		}),
@@ -521,7 +524,7 @@ func TestWorkspaceSubstrateWorldTouchedFailureIsSplitState(t *testing.T) {
 	// verifiably landed, but nothing was verifiably untouched either —
 	// chunked writes may have partially applied. split_state with zero
 	// captures is the honest report.
-	if result.Outcome != MaterializationSplitState {
+	if result.Outcome != trace.MaterializationSplitState {
 		t.Errorf("outcome = %q, want split_state (world-touched failure)", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 0 {
@@ -545,7 +548,7 @@ func TestWorkspaceSubstrateSplitStateAfterPartialApplication(t *testing.T) {
 	}
 	ws := NewWorkspaceSubstrate(sb)
 
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:ok1", map[string]any{
 			"path": "one.txt", "content_b64": base64.StdEncoding.EncodeToString([]byte("1")),
 		}),
@@ -559,7 +562,7 @@ func TestWorkspaceSubstrateSplitStateAfterPartialApplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSplitState {
+	if result.Outcome != trace.MaterializationSplitState {
 		t.Errorf("outcome = %q, want split_state", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 1 {
@@ -584,7 +587,7 @@ func TestWorkspaceSubstrateRejectsMalformedDeclarations(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		record Record
+		record trace.Record
 	}{
 		{"write without path", workspaceDecl(SchemaWorkspaceFileWrite, "sha256:x", map[string]any{"content_b64": "aGk="})},
 		{"write without content", workspaceDecl(SchemaWorkspaceFileWrite, "sha256:x", map[string]any{"path": "a.txt"})},
@@ -596,14 +599,14 @@ func TestWorkspaceSubstrateRejectsMalformedDeclarations(t *testing.T) {
 		{"exec with non-string arg", workspaceDecl(SchemaWorkspaceExec, "sha256:x", map[string]any{"command": "ls", "args": []any{"ok", json.Number("1")}})},
 	}
 	for _, tc := range cases {
-		result, err := ws.Materialize(context.Background(), []Record{tc.record})
+		result, err := ws.Materialize(context.Background(), []trace.Record{tc.record})
 		if err != nil {
 			t.Errorf("%s: unexpected transport error: %v", tc.name, err)
 			continue
 		}
 		// Substrate-level payload errors surface as clean_failure results
 		// (honest outcomes), not transport errors.
-		if result.Outcome != MaterializationCleanFailure {
+		if result.Outcome != trace.MaterializationCleanFailure {
 			t.Errorf("%s: outcome = %q, want clean_failure", tc.name, result.Outcome)
 		}
 		if result.FailureReason == "" {
@@ -624,20 +627,20 @@ func TestWorkspaceSubstrateTimeoutDiscipline(t *testing.T) {
 	sb := fullCapsFake()
 	ws := NewWorkspaceSubstrate(sb)
 
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceExec, "sha256:e1", map[string]any{"command": "ls"}),
 	})
 	if err != nil {
 		t.Fatalf("materialize without timeout: %v", err)
 	}
-	if result.Outcome != MaterializationSuccess {
+	if result.Outcome != trace.MaterializationSuccess {
 		t.Fatalf("outcome = %q, want success", result.Outcome)
 	}
 	if len(sb.execDeadlines) != 1 || sb.execDeadlines[0] {
 		t.Errorf("exec ctx deadline without timeout_ms = %v, want none", sb.execDeadlines)
 	}
 
-	result, err = ws.Materialize(context.Background(), []Record{
+	result, err = ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceExec, "sha256:e2", map[string]any{
 			"command": "ls", "timeout_ms": json.Number("-1"),
 		}),
@@ -647,7 +650,7 @@ func TestWorkspaceSubstrateTimeoutDiscipline(t *testing.T) {
 	}
 	// Rejected during payload validation, before the sandbox call: a clean
 	// failure, nothing touched.
-	if result.Outcome != MaterializationCleanFailure {
+	if result.Outcome != trace.MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure for a negative timeout", result.Outcome)
 	}
 	if len(sb.execs) != 1 {
@@ -659,20 +662,20 @@ func TestWorkspaceSubstrateRejectsUnknownSchemas(t *testing.T) {
 	sb := fullCapsFake()
 	ws := NewWorkspaceSubstrate(sb)
 
-	result, err := ws.Materialize(context.Background(), []Record{
+	result, err := ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl("workspace.file.delete.v1", "sha256:del", map[string]any{"path": "gone.txt"}),
 	})
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationCleanFailure {
+	if result.Outcome != trace.MaterializationCleanFailure {
 		t.Errorf("outcome = %q, want clean_failure for an unsupported schema", result.Outcome)
 	}
 	if len(result.CaptureDrafts) != 0 {
 		t.Errorf("captures = %d, want none", len(result.CaptureDrafts))
 	}
 
-	result, err = ws.Materialize(context.Background(), []Record{
+	result, err = ws.Materialize(context.Background(), []trace.Record{
 		workspaceDecl(SchemaWorkspaceFileWrite, "sha256:ok", map[string]any{
 			"path": "kept.txt", "content_b64": base64.StdEncoding.EncodeToString([]byte("kept")),
 		}),
@@ -681,7 +684,7 @@ func TestWorkspaceSubstrateRejectsUnknownSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
-	if result.Outcome != MaterializationSplitState || len(result.CaptureDrafts) != 1 || len(result.WorldSideAnchors) != 1 {
+	if result.Outcome != trace.MaterializationSplitState || len(result.CaptureDrafts) != 1 || len(result.WorldSideAnchors) != 1 {
 		t.Errorf("result = %+v, want split_state with one capture and one anchor", result)
 	}
 }
@@ -691,4 +694,9 @@ func TestWorkspaceSubstrateRejectsUnknownSchemas(t *testing.T) {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+func jsonNumber(t *testing.T, n int) json.Number {
+	t.Helper()
+	return json.Number(strconv.Itoa(n))
 }

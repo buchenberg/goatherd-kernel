@@ -1,4 +1,4 @@
-package shepherd
+package substrate
 
 // Minimal vNext substrate contract and registry (plan 03 §1), mirroring
 // shepherd2/src/shepherd2/vnext/substrates.py.
@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"reflect"
 )
 
@@ -59,11 +60,11 @@ type Substrate interface {
 	DeclarationSchemas() []string
 	// CaptureSchemas lists the receipt schemas it emits.
 	CaptureSchemas() []string
-	// Containment is the witness-level containment classification stamped
+	// trace.Containment is the witness-level containment classification stamped
 	// into the retained context of the materialization captures.
-	Containment() Containment
+	Containment() trace.Containment
 	// Materialize applies the declarations and returns capture drafts.
-	Materialize(ctx context.Context, records []Record) (MaterializationResult, error)
+	Materialize(ctx context.Context, records []trace.Record) (trace.MaterializationResult, error)
 }
 
 // SubstrateRegistry is a fail-closed process-local substrate registry.
