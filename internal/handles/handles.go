@@ -1,4 +1,4 @@
-package shepherd
+package handles
 
 // Runtime handles (plan 02 §5), mirroring shepherd2/runtime/handles.py: a
 // synchronous facade over the store. No scheduler, no goroutine management
@@ -30,10 +30,10 @@ import (
 )
 
 // trustedHandlesReadContext mirrors Python's TRUSTED_READ_CONTEXT.
-var trustedHandlesReadContext = ReadContext{
+var trustedHandlesReadContext = trace.ReadContext{
 	ActorRef:             "runtime:internal",
 	PresentedWitnessRefs: []string{"trusted:internal"},
-	VisibilityProfile:    VisibilityPayload,
+	VisibilityProfile:    trace.VisibilityPayload,
 }
 
 // TaskFunc is one programmatic task body. It returns the run's outputs; a
@@ -79,7 +79,7 @@ func (r *Registry) lookup(taskRef string) (TaskFunc, error) {
 // carries the body's completion channel, so a failed body surfaces through
 // Wait instead of polling forever for a frontier that will never exist.
 type Run struct {
-	store       *SQLiteTraceStore
+	store       *trace.SQLiteTraceStore
 	executionID string
 	frontierID  string
 	done        <-chan error // nil for StartTaskSync runs
@@ -92,56 +92,56 @@ func (r *Run) FrontierID() string  { return r.frontierID }
 // terminal frontier may not exist yet: the not-published condition is
 // retried, real store errors return immediately, and a failed body returns
 // its error rather than a hang.
-func (r *Run) Wait(ctx context.Context) (*Execution, error) {
+func (r *Run) Wait(ctx context.Context) (*trace.Execution, error) {
 	cutoff, err := r.waitForCutoff(ctx)
 	if err != nil {
 		return nil, err
 	}
-	slice, err := r.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, ModeBoth)
+	slice, err := r.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, trace.ModeBoth)
 	if err != nil {
 		return nil, err
 	}
-	return ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
+	return trace.ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
 }
 
 // Snapshot returns the CURRENT projected execution — pending, running or
 // terminal — without waiting for anything: it folds the owner prefix as it
 // stands. Unlike Wait it never blocks on the frontier.
-func (r *Run) Snapshot(ctx context.Context) (*Execution, error) {
+func (r *Run) Snapshot(ctx context.Context) (*trace.Execution, error) {
 	// ctx threads into the owner-prefix read like every other store call.
-	slice, err := r.store.ReadOwnerPrefix(ctx, trustedHandlesReadContext, r.executionID, 99, ModeBoth)
+	slice, err := r.store.ReadOwnerPrefix(ctx, trustedHandlesReadContext, r.executionID, 99, trace.ModeBoth)
 	if err != nil {
 		return nil, err
 	}
-	return ProjectExecution(slice, r.executionID, nil)
+	return trace.ProjectExecution(slice, r.executionID, nil)
 }
 
 // Cutoff returns the durable terminal read receipt for this run.
-func (r *Run) Cutoff(ctx context.Context) (Frontier, error) {
+func (r *Run) Cutoff(ctx context.Context) (trace.Frontier, error) {
 	return r.waitForCutoff(ctx)
 }
 
 // waitForCutoff polls only for the not-published condition
-// (ErrUnknownFrontier); every other error — a closed store, a corrupt
+// (trace.ErrUnknownFrontier); every other error — a closed store, a corrupt
 // frontier, a resolver disagreement — returns immediately instead of
 // spinning as "not yet". A failed body that left no frontier surfaces
 // through the done channel.
-func (r *Run) waitForCutoff(ctx context.Context) (Frontier, error) {
+func (r *Run) waitForCutoff(ctx context.Context) (trace.Frontier, error) {
 	for {
 		cutoff, err := r.store.ReadOwnerCutoff(ctx, r.frontierID)
 		if err == nil {
 			return cutoff, nil
 		}
-		if !errors.Is(err, ErrUnknownFrontier) {
-			return Frontier{}, err
+		if !errors.Is(err, trace.ErrUnknownFrontier) {
+			return trace.Frontier{}, err
 		}
 		select {
 		case runErr, ok := <-r.done:
 			if ok && runErr != nil {
-				return Frontier{}, fmt.Errorf("task run failed: %w", runErr)
+				return trace.Frontier{}, fmt.Errorf("task run failed: %w", runErr)
 			}
 		case <-ctx.Done():
-			return Frontier{}, fmt.Errorf("waiting for frontier %s: %w", r.frontierID, ctx.Err())
+			return trace.Frontier{}, fmt.Errorf("waiting for frontier %s: %w", r.frontierID, ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -154,44 +154,44 @@ func (r *Run) waitForCutoff(ctx context.Context) (Frontier, error) {
 // exactly like Python's handle, whose cutoff property would raise on a
 // missing frontier.
 type ChildHandle struct {
-	store       *SQLiteTraceStore
+	store       *trace.SQLiteTraceStore
 	executionID string
 	frontierID  string
 	relationID  string
-	relation    ExecutionRelation
+	relation    trace.ExecutionRelation
 }
 
-func (h *ChildHandle) ExecutionID() string         { return h.executionID }
-func (h *ChildHandle) FrontierID() string          { return h.frontierID }
-func (h *ChildHandle) RelationID() string          { return h.relationID }
-func (h *ChildHandle) Relation() ExecutionRelation { return h.relation }
+func (h *ChildHandle) ExecutionID() string               { return h.executionID }
+func (h *ChildHandle) FrontierID() string                { return h.frontierID }
+func (h *ChildHandle) RelationID() string                { return h.relationID }
+func (h *ChildHandle) Relation() trace.ExecutionRelation { return h.relation }
 
-func (h *ChildHandle) Wait(ctx context.Context) (*Execution, error) {
+func (h *ChildHandle) Wait(ctx context.Context) (*trace.Execution, error) {
 	cutoff, err := h.store.ReadOwnerCutoff(ctx, h.frontierID)
 	if err != nil {
 		return nil, err
 	}
-	slice, err := h.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, ModeBoth)
+	slice, err := h.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, trace.ModeBoth)
 	if err != nil {
 		return nil, err
 	}
-	return ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
+	return trace.ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
 }
 
 // Snapshot returns the child's current projection from its retained
 // frontier. A spawned child is terminal by the time its handle exists.
-func (h *ChildHandle) Snapshot(ctx context.Context) (*Execution, error) {
+func (h *ChildHandle) Snapshot(ctx context.Context) (*trace.Execution, error) {
 	return h.Wait(ctx)
 }
 
-func (h *ChildHandle) Cutoff(ctx context.Context) (Frontier, error) {
+func (h *ChildHandle) Cutoff(ctx context.Context) (trace.Frontier, error) {
 	return h.store.ReadOwnerCutoff(ctx, h.frontierID)
 }
 
 // TaskControl is the parent-owned control surface available while a task
 // body runs.
 type TaskControl struct {
-	store                *SQLiteTraceStore
+	store                *trace.SQLiteTraceStore
 	executionID          string
 	runID                string
 	causalTail           string
@@ -201,7 +201,7 @@ type TaskControl struct {
 	frontiersByExecution map[string]string
 }
 
-func newTaskControl(store *SQLiteTraceStore, executionID, runID, causalTail string) *TaskControl {
+func newTaskControl(store *trace.SQLiteTraceStore, executionID, runID, causalTail string) *TaskControl {
 	return &TaskControl{
 		store:                store,
 		executionID:          executionID,
@@ -216,34 +216,34 @@ func (c *TaskControl) CausalTail() string { return c.causalTail }
 
 // Publish appends a parent-owned fact into the current execution trace and
 // advances the causal tail to it. Python returns the Fact; Go returns the
-// retained Record. A nil data map publishes {}, never JSON null — Python's
+// retained trace.Record. A nil data map publishes {}, never JSON null — Python's
 // dict(data or {}) normalizes the same way.
-func (c *TaskControl) Publish(ctx context.Context, kind string, data map[string]any) (Record, error) {
+func (c *TaskControl) Publish(ctx context.Context, kind string, data map[string]any) (trace.Record, error) {
 	c.publishIndex++
-	receipt, err := c.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	receipt, err := c.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:publish:%d", c.runID, c.publishIndex),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  c.executionID,
 			CausalParents: []string{c.causalTail},
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
-				SchemaRef: SchemaRuntimePublishedFact,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
+				SchemaRef: trace.SchemaRuntimePublishedFact,
 				KindLabel: "fact_published",
 				Payload:   map[string]any{"kind": kind, "data": trace.NonNilMap(data)},
 			}},
 		}},
 	})
 	if err != nil {
-		return Record{}, err
+		return trace.Record{}, err
 	}
 	c.causalTail = receipt.FactIDs[len(receipt.FactIDs)-1]
 	visible, err := c.store.ReadFact(ctx, trustedHandlesReadContext, c.causalTail)
 	if err != nil {
-		return Record{}, err
+		return trace.Record{}, err
 	}
-	fact, ok := visible.(Record)
+	fact, ok := visible.(trace.Record)
 	if !ok {
-		return Record{}, fmt.Errorf("runtime publish expected payload-visible fact")
+		return trace.Record{}, fmt.Errorf("runtime publish expected payload-visible fact")
 	}
 	return fact, nil
 }
@@ -261,13 +261,13 @@ func (c *TaskControl) Spawn(ctx context.Context, taskRef string, inputs map[stri
 	c.childIndex++
 	childRunID := fmt.Sprintf("%s:child:%d", c.runID, c.childIndex)
 	childCreateIntent := childRunID + ":create"
-	childExecutionID := ExecutionIDFor(childCreateIntent, "execution")
+	childExecutionID := trace.ExecutionIDFor(childCreateIntent, "execution")
 	childFrontierID := "frontier:" + childRunID + ":terminal"
 	relationIntent := childRunID + ":relation:spawned"
-	relationID := RelationIDFor(relationIntent, "relation")
+	relationID := trace.RelationIDFor(relationIntent, "relation")
 
-	relationReceipt, err := c.store.Append(ctx, TrustedAppendContext, CreateExecutionRelationBatch(
-		relationIntent, relationID, RelationSpawned,
+	relationReceipt, err := c.store.Append(ctx, trace.TrustedAppendContext, trace.CreateExecutionRelationBatch(
+		relationIntent, relationID, trace.RelationSpawned,
 		c.executionID, childExecutionID, childFrontierID,
 		[]string{c.causalTail},
 	))
@@ -300,7 +300,7 @@ func (c *TaskControl) Spawn(ctx context.Context, taskRef string, inputs map[stri
 // AwaitTerminal observes a child's terminal cutoff and returns the projected
 // execution. It also advances this control's causal tail to the child's
 // terminal frontier record, matching the reference.
-func (c *TaskControl) AwaitTerminal(ctx context.Context, handle *ChildHandle) (*Execution, error) {
+func (c *TaskControl) AwaitTerminal(ctx context.Context, handle *ChildHandle) (*trace.Execution, error) {
 	_ = ctx // kept for the plan's API; children are terminal already
 	c.frontiersByExecution[handle.executionID] = handle.frontierID
 	cutoff, err := handle.Cutoff(context.Background())
@@ -315,7 +315,7 @@ func (c *TaskControl) AwaitTerminal(ctx context.Context, handle *ChildHandle) (*
 }
 
 // ReadExecution reads a known child execution from its retained frontier.
-func (c *TaskControl) ReadExecution(ctx context.Context, executionID string) (*Execution, error) {
+func (c *TaskControl) ReadExecution(ctx context.Context, executionID string) (*trace.Execution, error) {
 	frontierID, ok := c.frontiersByExecution[executionID]
 	if !ok {
 		return nil, fmt.Errorf("execution is not known to this control: %s", executionID)
@@ -324,11 +324,11 @@ func (c *TaskControl) ReadExecution(ctx context.Context, executionID string) (*E
 	if err != nil {
 		return nil, err
 	}
-	slice, err := c.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, ModeBoth)
+	slice, err := c.store.ResolveFrontier(ctx, trustedHandlesReadContext, cutoff.FrontierID, trace.ModeBoth)
 	if err != nil {
 		return nil, err
 	}
-	return ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
+	return trace.ProjectExecution(slice, cutoff.TargetTraceOwnerID, &cutoff)
 }
 
 // Adopt records a parent-owned adopted relation to an existing execution.
@@ -349,10 +349,10 @@ func (c *TaskControl) Adopt(ctx context.Context, executionID, frontierID, relati
 	c.relationIndex++
 	relationIntent := fmt.Sprintf("%s:relation:adopted:%d", c.runID, c.relationIndex)
 	if relationID == "" {
-		relationID = RelationIDFor(relationIntent, "relation")
+		relationID = trace.RelationIDFor(relationIntent, "relation")
 	}
-	relationReceipt, err := c.store.Append(ctx, TrustedAppendContext, CreateExecutionRelationBatch(
-		relationIntent, relationID, RelationAdopted,
+	relationReceipt, err := c.store.Append(ctx, trace.TrustedAppendContext, trace.CreateExecutionRelationBatch(
+		relationIntent, relationID, trace.RelationAdopted,
 		c.executionID, executionID, frontierID,
 		[]string{c.causalTail},
 	))
@@ -380,10 +380,10 @@ func (c *TaskControl) Adopt(ctx context.Context, executionID, frontierID, relati
 // without polling: Python's abandon reads handle.cutoff as a property, which
 // raises on a missing frontier — a child without a terminal cutoff cannot
 // be abandoned, it can only be left alone.
-func (c *TaskControl) Abandon(ctx context.Context, handle *ChildHandle) (ExecutionRelation, error) {
+func (c *TaskControl) Abandon(ctx context.Context, handle *ChildHandle) (trace.ExecutionRelation, error) {
 	cutoff, err := c.store.ReadOwnerCutoff(ctx, handle.frontierID)
 	if err != nil {
-		return ExecutionRelation{}, fmt.Errorf("abandon: child has no terminal cutoff: %w", err)
+		return trace.ExecutionRelation{}, fmt.Errorf("abandon: child has no terminal cutoff: %w", err)
 	}
 	c.relationIndex++
 	// Python dedupes (causal_tail, created_by or through) preserving order;
@@ -396,33 +396,33 @@ func (c *TaskControl) Abandon(ctx context.Context, handle *ChildHandle) (Executi
 	if terminal != causedBy[0] {
 		causedBy = append(causedBy, terminal)
 	}
-	relationReceipt, err := c.store.Append(ctx, TrustedAppendContext, CreateExecutionRelationBatch(
+	relationReceipt, err := c.store.Append(ctx, trace.TrustedAppendContext, trace.CreateExecutionRelationBatch(
 		fmt.Sprintf("%s:relation:abandoned:%d", c.runID, c.relationIndex),
-		handle.relationID, RelationAbandoned,
+		handle.relationID, trace.RelationAbandoned,
 		c.executionID, handle.executionID, handle.frontierID,
 		causedBy,
 	))
 	if err != nil {
-		return ExecutionRelation{}, err
+		return trace.ExecutionRelation{}, err
 	}
 	relation, err := c.readRelation(ctx, relationReceipt.FactIDs[0])
 	if err != nil {
-		return ExecutionRelation{}, err
+		return trace.ExecutionRelation{}, err
 	}
 	c.causalTail = relation.CreatedFactID
 	return relation, nil
 }
 
-func (c *TaskControl) readRelation(ctx context.Context, factID string) (ExecutionRelation, error) {
+func (c *TaskControl) readRelation(ctx context.Context, factID string) (trace.ExecutionRelation, error) {
 	visible, err := c.store.ReadFact(ctx, trustedHandlesReadContext, factID)
 	if err != nil {
-		return ExecutionRelation{}, err
+		return trace.ExecutionRelation{}, err
 	}
-	fact, ok := visible.(Record)
+	fact, ok := visible.(trace.Record)
 	if !ok {
-		return ExecutionRelation{}, fmt.Errorf("runtime relation projection expected payload-visible fact")
+		return trace.ExecutionRelation{}, fmt.Errorf("runtime relation projection expected payload-visible fact")
 	}
-	return ExecutionRelationFromFact(fact)
+	return trace.ExecutionRelationFromFact(fact)
 }
 
 // advanceToTerminalFact moves the causal tail to the frontier record a
@@ -442,7 +442,7 @@ func (c *TaskControl) advanceToTerminalFact(ctx context.Context, frontierID stri
 // StartTaskSync runs a task synchronously — the faithful port of Python's
 // @task start. An empty runID generates one ("run:<32 hex>", the shape of
 // Python's uuid4().hex). The returned Run is terminal by the time it exists.
-func StartTaskSync(ctx context.Context, store *SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any) (*Run, error) {
+func StartTaskSync(ctx context.Context, store *trace.SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any) (*Run, error) {
 	if runID == "" {
 		var err error
 		runID, err = generateRunID()
@@ -457,7 +457,7 @@ func StartTaskSync(ctx context.Context, store *SQLiteTraceStore, reg *Registry, 
 // Run; Wait blocks until the body has recorded its terminal frontier, and a
 // failed body surfaces through Wait as an error rather than a hang. This is
 // the Go-idiom addition documented in the file header.
-func StartTask(ctx context.Context, store *SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any) (*Run, error) {
+func StartTask(ctx context.Context, store *trace.SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any) (*Run, error) {
 	_ = ctx
 	if runID == "" {
 		var err error
@@ -469,7 +469,7 @@ func StartTask(ctx context.Context, store *SQLiteTraceStore, reg *Registry, task
 	done := make(chan error, 1)
 	run := &Run{
 		store:       store,
-		executionID: ExecutionIDFor(runID+":create", "execution"),
+		executionID: trace.ExecutionIDFor(runID+":create", "execution"),
 		frontierID:  "frontier:" + runID + ":terminal",
 		done:        done,
 	}
@@ -494,7 +494,7 @@ func generateRunID() (string, error) {
 // runTaskSync is the faithful port of Python's _run_task_sync: idempotent by
 // terminal-frontier existence, create → body → complete-or-fail → terminal
 // frontier, with the causal wiring the vectors record.
-func runTaskSync(ctx context.Context, store *SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any,
+func runTaskSync(ctx context.Context, store *trace.SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any,
 	parentExecutionID string, createCausedBy []string,
 	frontierPublisherExecutionID string, frontierCausedBy []string) (*Run, error) {
 	if err := runTaskSyncError(ctx, store, reg, taskRef, runID, inputs,
@@ -503,19 +503,19 @@ func runTaskSync(ctx context.Context, store *SQLiteTraceStore, reg *Registry, ta
 	}
 	return &Run{
 		store:       store,
-		executionID: ExecutionIDFor(runID+":create", "execution"),
+		executionID: trace.ExecutionIDFor(runID+":create", "execution"),
 		frontierID:  "frontier:" + runID + ":terminal",
 	}, nil
 }
 
-func runTaskSyncError(ctx context.Context, store *SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any,
+func runTaskSyncError(ctx context.Context, store *trace.SQLiteTraceStore, reg *Registry, taskRef, runID string, inputs map[string]any,
 	parentExecutionID string, createCausedBy []string,
 	frontierPublisherExecutionID string, frontierCausedBy []string) error {
 	createIntent := runID + ":create"
 	completeIntent := runID + ":complete"
 	failIntent := runID + ":fail"
 	frontierID := "frontier:" + runID + ":terminal"
-	executionID := ExecutionIDFor(createIntent, "execution")
+	executionID := trace.ExecutionIDFor(createIntent, "execution")
 
 	// Idempotency: a rerun of the same run id against a store that already
 	// holds the terminal frontier returns the retained run without appending
@@ -527,11 +527,11 @@ func runTaskSyncError(ctx context.Context, store *SQLiteTraceStore, reg *Registr
 		_ = cutoff
 		return nil
 	}
-	if !errors.Is(err, ErrUnknownFrontier) {
+	if !errors.Is(err, trace.ErrUnknownFrontier) {
 		return err
 	}
 
-	createReceipt, err := store.Append(ctx, TrustedAppendContext, CreateExecutionBatch(
+	createReceipt, err := store.Append(ctx, trace.TrustedAppendContext, trace.CreateExecutionBatch(
 		createIntent, executionID, taskRef, inputs, parentExecutionID, createCausedBy,
 	))
 	if err != nil {
@@ -545,13 +545,13 @@ func runTaskSyncError(ctx context.Context, store *SQLiteTraceStore, reg *Registr
 	// than leaving a permanently running one.
 	outputs, runErr := runTaskBody(reg, taskRef, control)
 
-	var terminalReceipt AppendReceipt
+	var terminalReceipt trace.AppendReceipt
 	if runErr == nil {
-		terminalReceipt, err = store.Append(ctx, TrustedAppendContext, CompleteExecutionBatch(
+		terminalReceipt, err = store.Append(ctx, trace.TrustedAppendContext, trace.CompleteExecutionBatch(
 			completeIntent, executionID, outputs, []string{control.causalTail},
 		))
 	} else {
-		terminalReceipt, err = store.Append(ctx, TrustedAppendContext, FailExecutionBatch(
+		terminalReceipt, err = store.Append(ctx, trace.TrustedAppendContext, trace.FailExecutionBatch(
 			failIntent, executionID, runErr.Error(), []string{control.causalTail},
 		))
 	}
@@ -559,7 +559,7 @@ func runTaskSyncError(ctx context.Context, store *SQLiteTraceStore, reg *Registr
 		return err
 	}
 
-	_, err = PublishExecutionFrontier(ctx, store, TrustedAppendContext,
+	_, err = trace.PublishExecutionFrontier(ctx, store, trace.TrustedAppendContext,
 		frontierID, executionID, terminalReceipt.FactIDs[len(terminalReceipt.FactIDs)-1],
 		frontierPublisherExecutionID, "", frontierCausedBy)
 	return err

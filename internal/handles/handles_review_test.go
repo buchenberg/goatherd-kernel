@@ -1,4 +1,4 @@
-package shepherd
+package handles
 
 // Review-hardening tests for the runtime facade (PR #20): the history
 // vector replay — a Python-run tree driven through the Go facade must
@@ -11,6 +11,7 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ import (
 func TestHistoryVectorTreeReplay(t *testing.T) {
 	doc := loadExecutionVectors(t)
 	vec := doc.HistorySequence
-	if vec.ExecutionID != ExecutionIDFor(vec.RunID+":create", "execution") {
+	if vec.ExecutionID != trace.ExecutionIDFor(vec.RunID+":create", "execution") {
 		t.Fatalf("vector execution id disagrees with the derivation: %s", vec.ExecutionID)
 	}
 
@@ -67,7 +68,7 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 		t.Fatalf("StartTaskSync: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}
@@ -84,12 +85,12 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cutoff: %v", err)
 	}
-	history, err := ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
+	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
 	if err != nil {
-		t.Fatalf("ProjectEffectiveHistoryFromStore: %v", err)
+		t.Fatalf("trace.ProjectEffectiveHistoryFromStore: %v", err)
 	}
 
-	if history.Root.Status != ExecutionStatus(vec.RootStatus) || history.Root.TaskRef != vec.RootTaskRef {
+	if history.Root.Status != trace.ExecutionStatus(vec.RootStatus) || history.Root.TaskRef != vec.RootTaskRef {
 		t.Errorf("root = %s %s, want %s %s", history.Root.Status, history.Root.TaskRef, vec.RootStatus, vec.RootTaskRef)
 	}
 	if len(history.Children) != len(vec.Children) {
@@ -125,7 +126,7 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 // though the records are — against a durable store, closed and reopened.
 func TestStartTaskSyncIdempotentRerunRunsBodyOnce(t *testing.T) {
 	path := t.TempDir() + "/idempotent.sqlite"
-	store, err := NewSQLiteTraceStore(path)
+	store, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestStartTaskSyncIdempotentRerunRunsBodyOnce(t *testing.T) {
 	if err := store.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	reopened, err := NewSQLiteTraceStore(path)
+	reopened, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -175,7 +176,7 @@ func TestStartTaskAsyncFailureSurfaces(t *testing.T) {
 	}
 	// The lookup failure is a body failure: the run records failed and
 	// publishes a terminal frontier, so Wait also projects it.
-	if exec.Status != ExecutionFailed {
+	if exec.Status != trace.ExecutionFailed {
 		t.Errorf("status = %s, want failed", exec.Status)
 	}
 	if exec.Error == "" {
@@ -208,7 +209,7 @@ func TestStartTaskSnapshotMidFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot mid-flight: %v", err)
 	}
-	if snap.Status != ExecutionRunning {
+	if snap.Status != trace.ExecutionRunning {
 		t.Errorf("mid-flight snapshot = %s, want running", snap.Status)
 	}
 	if snap.TaskRef != "BlockingTask" {
@@ -222,7 +223,7 @@ func TestStartTaskSnapshotMidFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionSucceeded {
+	if exec.Status != trace.ExecutionSucceeded {
 		t.Errorf("terminal status = %s, want succeeded", exec.Status)
 	}
 }

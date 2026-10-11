@@ -1,4 +1,4 @@
-package shepherd
+package handles
 
 // Handles integration test (plan 02 §6): a task tree with spawn, adopt and
 // abandon, projected from the run frontier, plus the restart law — reopen
@@ -7,14 +7,15 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"path/filepath"
 	"testing"
 )
 
-// historySummary flattens an EffectiveHistory into a comparable shape for
+// historySummary flattens an trace.EffectiveHistory into a comparable shape for
 // the restart law: identities and kinds, not pointers.
 type historySummary struct {
-	RootStatus  ExecutionStatus
+	RootStatus  trace.ExecutionStatus
 	RootTaskRef string
 	Children    []childSummary
 	Published   []string
@@ -22,12 +23,12 @@ type historySummary struct {
 
 type childSummary struct {
 	TaskRef  string
-	Status   ExecutionStatus
-	Kind     RelationKind
+	Status   trace.ExecutionStatus
+	Kind     trace.RelationKind
 	Relation string
 }
 
-func summarizeHistory(h *EffectiveHistory) historySummary {
+func summarizeHistory(h *trace.EffectiveHistory) historySummary {
 	s := historySummary{RootStatus: h.Root.Status, RootTaskRef: h.Root.TaskRef}
 	for _, child := range h.Children {
 		s.Children = append(s.Children, childSummary{
@@ -50,7 +51,7 @@ func summarizeHistory(h *EffectiveHistory) historySummary {
 // re-project it identically.
 func TestHandlesIntegrationTree(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "handles.sqlite")
-	store, err := NewSQLiteTraceStore(path)
+	store, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionSucceeded {
+	if exec.Status != trace.ExecutionSucceeded {
 		t.Fatalf("parent status = %s, want succeeded", exec.Status)
 	}
 
@@ -109,16 +110,16 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cutoff: %v", err)
 	}
-	history, err := ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
+	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
 	if err != nil {
-		t.Fatalf("ProjectEffectiveHistoryFromStore: %v", err)
+		t.Fatalf("trace.ProjectEffectiveHistoryFromStore: %v", err)
 	}
 	want := historySummary{
-		RootStatus:  ExecutionSucceeded,
+		RootStatus:  trace.ExecutionSucceeded,
 		RootTaskRef: "ParentTask",
 		Children: []childSummary{
-			{TaskRef: "LeafTask", Status: ExecutionSucceeded, Kind: RelationSpawned},
-			{TaskRef: "LeafTask", Status: ExecutionSucceeded, Kind: RelationAdopted},
+			{TaskRef: "LeafTask", Status: trace.ExecutionSucceeded, Kind: trace.RelationSpawned},
+			{TaskRef: "LeafTask", Status: trace.ExecutionSucceeded, Kind: trace.RelationAdopted},
 		},
 		Published: []string{"phase", "phase"},
 	}
@@ -144,7 +145,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err := store.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	reopened, err := NewSQLiteTraceStore(path)
+	reopened, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadOwnerCutoff after restart: %v", err)
 	}
-	historyAfter, err := ProjectEffectiveHistoryFromStore(context.Background(), reopened, reader, reopenedCutoff)
+	historyAfter, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), reopened, reader, reopenedCutoff)
 	if err != nil {
 		t.Fatalf("re-project: %v", err)
 	}

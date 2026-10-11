@@ -1,4 +1,4 @@
-package shepherd
+package handles
 
 // Runtime handle tests (plan 02 §5). The acceptance anchor is
 // TestStartTaskSyncMatchesPythonVector: the same fixture task run through
@@ -8,6 +8,7 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestStartTaskSyncMatchesPythonVector(t *testing.T) {
 		t.Errorf("execution id = %s, want %s", run.ExecutionID(), vec.ExecutionID)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestStartTaskSyncMatchesPythonVector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionSucceeded || exec.Outputs["label"] != "ok" {
+	if exec.Status != trace.ExecutionSucceeded || exec.Outputs["label"] != "ok" {
 		t.Errorf("waited execution = %s %v", exec.Status, exec.Outputs)
 	}
 }
@@ -88,7 +89,7 @@ func TestStartTaskSyncFailedRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionFailed {
+	if exec.Status != trace.ExecutionFailed {
 		t.Errorf("status = %s, want failed", exec.Status)
 	}
 	if exec.Error != "boom" {
@@ -122,7 +123,7 @@ func TestStartTaskSyncPanicRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionFailed {
+	if exec.Status != trace.ExecutionFailed {
 		t.Errorf("status = %s, want failed", exec.Status)
 	}
 	if !strings.HasPrefix(exec.Error, "panic: ") || !strings.Contains(exec.Error, "kaboom") {
@@ -147,7 +148,7 @@ func TestStartTaskAsyncWait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if exec.Status != ExecutionSucceeded {
+	if exec.Status != trace.ExecutionSucceeded {
 		t.Errorf("status = %s, want succeeded", exec.Status)
 	}
 	if exec.ExecutionID != run.ExecutionID() {

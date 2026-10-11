@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
-	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
 )
 
 func newMemStore(t *testing.T) *SQLiteTraceStore {
@@ -39,12 +38,6 @@ func draft(kind string, mode RecordMode, payload map[string]any, causedBy ...str
 		Payload:         payload,
 		CausedByFactIDs: causedBy,
 	}
-}
-
-type executionVectorDoc = testvectors.ExecutionVectorDoc
-
-func loadExecutionVectors(t *testing.T) executionVectorDoc {
-	return testvectors.LoadExecutionVectors(t, "testdata/execution_vectors_v0.json")
 }
 
 func newTestRepo(t *testing.T) string { return gittest.NewTestRepo(t) }
