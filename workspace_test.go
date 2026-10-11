@@ -25,26 +25,9 @@ func fileExists(t *testing.T, dir, name string) bool {
 }
 
 // mustHead returns the current HEAD SHA, failing the test on error.
-func mustHead(t *testing.T, dir string) string {
-	t.Helper()
-	sha, err := (&gitRunner{dir: dir}).headSHA(context.Background())
-	if err != nil {
-		t.Fatalf("headSHA: %v", err)
-	}
-	return sha
-}
 
 // stagedFiles returns the staged file list, used to pin the non-mutating
 // contract of Capture and Diff.
-func stagedFiles(t *testing.T, dir string) string {
-	t.Helper()
-	out, err := (&gitRunner{dir: dir}).run(context.Background(), "diff", "--cached", "--name-only")
-	if err != nil {
-		t.Fatalf("git diff --cached: %v", err)
-	}
-	return out
-}
-
 func TestWorkspace_CaptureCleanRepo(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)

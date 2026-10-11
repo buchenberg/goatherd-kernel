@@ -2,56 +2,12 @@ package shepherd
 
 import (
 	"context"
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// newTestRepo creates a temp git repo with an initial commit, isolated from
-// the developer's global and system git config (gpgsign, hooksPath, commit
-// templates, etc.) so a host-machine setting can't break the tests.
-func newTestRepo(t *testing.T) string {
-	t.Helper()
-	requireGit(t)
-
-	dir := t.TempDir()
-
-	// Point git at empty global/system config so inherited settings
-	// (commit.gpgsign=true, core.hooksPath, commit.template, ...) don't
-	// make the test commit fail in ways that look like checkpoint defects.
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "gitconfig-system"))
-
-	mustGit(t, dir, "init")
-	mustGit(t, dir, "config", "user.email", "test@test.com")
-	mustGit(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test"), 0644); err != nil {
-		t.Fatalf("write README: %v", err)
-	}
-	mustGit(t, dir, "add", "-A")
-	mustGit(t, dir, "commit", "-m", "init")
-	return dir
-}
-
-// requireGit skips the test when the git binary is unavailable, producing a
-// clear skip instead of a confusing failure mid-test.
-func requireGit(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git binary not available")
-	}
-}
-
-// mustGit runs git in a dir, fails the test on error.
-func mustGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	g := &gitRunner{dir: dir}
-	if _, err := g.run(context.Background(), args...); err != nil {
-		t.Fatalf("git %s in %s: %v", args[0], dir, err)
-	}
-}
 
 // gitScope returns a root scope backed by an in-place git sandbox over repo.
 // The scope does not own the sandbox, so lifecycle operations never touch the
@@ -68,26 +24,7 @@ func stashOf(cp *Checkpoint) string {
 }
 
 // writeFile is a test helper that writes a file, failing the test on error.
-func writeFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0755); err != nil {
-		t.Fatalf("mkdir for %s: %v", name, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-}
-
 // readFile reads a file, failing the test on error.
-func readFile(t *testing.T, dir, name string) string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, name))
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return string(b)
-}
-
 func TestCheckpoint_CreateCleanRepo(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)
@@ -517,8 +454,7 @@ func TestCheckpoint_DoesNotLeaveIndexStaged(t *testing.T) {
 	}
 
 	// Nothing may remain staged after the checkpoint.
-	g := &gitRunner{dir: repo}
-	staged, err := g.run(context.Background(), "diff", "--cached", "--name-only")
+	staged, err := gittest.Run(t, repo, "diff", "--cached", "--name-only")
 	if err != nil {
 		t.Fatalf("git diff --cached: %v", err)
 	}

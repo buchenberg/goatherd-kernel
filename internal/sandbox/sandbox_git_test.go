@@ -1,7 +1,9 @@
-package shepherd
+package sandbox
 
 import (
 	"context"
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,23 +14,13 @@ import (
 // samePath reports whether two paths refer to the same location, resolving
 // symlinks so a temp-dir prefix difference (e.g. /var vs /private/var) does not
 // produce a false mismatch.
-func samePath(t *testing.T, a, b string) bool {
-	t.Helper()
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return ra == rb
-}
-
 func TestWorkspaceState_DigestIsOrderIndependent(t *testing.T) {
-	a := WorkspaceState{
+	a := trace.WorkspaceState{
 		Backend:  "git",
 		Revision: "abc",
 		Data:     map[string]any{"head_sha": "abc", "stash_sha": "def"},
 	}
-	b := WorkspaceState{
+	b := trace.WorkspaceState{
 		Backend:  "git",
 		Revision: "abc",
 		Data:     map[string]any{"stash_sha": "def", "head_sha": "abc"},
@@ -51,7 +43,7 @@ func TestWorkspaceState_DigestIsOrderIndependent(t *testing.T) {
 }
 
 func TestWorkspaceState_DigestSensitivity(t *testing.T) {
-	base := WorkspaceState{
+	base := trace.WorkspaceState{
 		Backend:  "git",
 		Revision: "abc",
 		Data:     map[string]any{"stash_sha": "def"},
@@ -61,7 +53,7 @@ func TestWorkspaceState_DigestSensitivity(t *testing.T) {
 		t.Fatalf("base digest: %v", err)
 	}
 
-	cases := map[string]WorkspaceState{
+	cases := map[string]trace.WorkspaceState{
 		"backend":  {Backend: "containerd", Revision: "abc", Data: map[string]any{"stash_sha": "def"}},
 		"revision": {Backend: "git", Revision: "xyz", Data: map[string]any{"stash_sha": "def"}},
 		"data":     {Backend: "git", Revision: "abc", Data: map[string]any{"stash_sha": "zzz"}},
@@ -81,7 +73,7 @@ func TestWorkspaceState_DigestSensitivity(t *testing.T) {
 }
 
 func TestWorkspaceState_DigestEmptyState(t *testing.T) {
-	if _, err := (WorkspaceState{}).Digest(); err != nil {
+	if _, err := (trace.WorkspaceState{}).Digest(); err != nil {
 		t.Fatalf("empty state digest: %v", err)
 	}
 }
@@ -99,8 +91,8 @@ func TestGitSandbox_Capabilities(t *testing.T) {
 	if !inPlace.Diff {
 		t.Error("git backend should support Diff")
 	}
-	if inPlace.Containment != ContainUncontained {
-		t.Errorf("in-place containment = %q, want %q", inPlace.Containment, ContainUncontained)
+	if inPlace.Containment != trace.ContainUncontained {
+		t.Errorf("in-place containment = %q, want %q", inPlace.Containment, trace.ContainUncontained)
 	}
 	if inPlace.Exec || inPlace.FileIO {
 		t.Error("git backend must not claim Exec or FileIO")
@@ -113,8 +105,8 @@ func TestGitSandbox_Capabilities(t *testing.T) {
 	if !worktree.Isolated {
 		t.Error("worktree mode should claim isolation")
 	}
-	if worktree.Containment != ContainBuffered {
-		t.Errorf("worktree containment = %q, want %q", worktree.Containment, ContainBuffered)
+	if worktree.Containment != trace.ContainBuffered {
+		t.Errorf("worktree containment = %q, want %q", worktree.Containment, trace.ContainBuffered)
 	}
 }
 
@@ -159,21 +151,6 @@ func TestGitSandbox_InPlaceDestroyIsNoOp(t *testing.T) {
 }
 
 // worktreePaths returns the paths git currently tracks as worktrees.
-func worktreePaths(t *testing.T, repo string) []string {
-	t.Helper()
-	out, err := (&gitRunner{dir: repo}).run(context.Background(), "worktree", "list", "--porcelain")
-	if err != nil {
-		t.Fatalf("git worktree list: %v", err)
-	}
-	var paths []string
-	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(line, "worktree "); ok {
-			paths = append(paths, rest)
-		}
-	}
-	return paths
-}
-
 func TestWorktreeSandbox_CreateAndDestroy(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestRepo(t)
@@ -193,8 +170,8 @@ func TestWorktreeSandbox_CreateAndDestroy(t *testing.T) {
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("worktree directory should be removed, stat err=%v", err)
 	}
-	for _, p := range worktreePaths(t, repo) {
-		if samePath(t, p, wtPath) {
+	for _, p := range gittest.WorktreePaths(t, repo) {
+		if gittest.SamePath(t, p, wtPath) {
 			t.Errorf("worktree %s still registered after Destroy", p)
 		}
 	}
@@ -207,7 +184,7 @@ func TestWorktreeSandbox_CreateAndDestroy(t *testing.T) {
 func TestWorktreeSandbox_CreateRefusesNonEmptyPath(t *testing.T) {
 	repo := newTestRepo(t)
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	writeFile(t, wtPath, "occupied.txt", "do not clobber")
+	gittest.WriteFile(t, wtPath, "occupied.txt", "do not clobber")
 
 	sb := NewWorktreeSandbox(repo, wtPath)
 	if err := sb.Create(context.Background(), SandboxSpec{}); err == nil {
@@ -242,8 +219,8 @@ func TestWorktreeSandbox_RecoversFromStaleEntry(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sb.Destroy(context.Background()) })
 
-	for _, p := range worktreePaths(t, repo) {
-		if samePath(t, p, wtPath) {
+	for _, p := range gittest.WorktreePaths(t, repo) {
+		if gittest.SamePath(t, p, wtPath) {
 			return
 		}
 	}
@@ -255,8 +232,8 @@ func TestWorktreeSandbox_ApplySeedsForkState(t *testing.T) {
 	repo := newTestRepo(t)
 
 	// Dirty the parent tree: a modified tracked file and an untracked file.
-	writeFile(t, repo, "README.md", "# Fork point")
-	writeFile(t, repo, "untracked.txt", "also at fork point")
+	gittest.WriteFile(t, repo, "README.md", "# Fork point")
+	gittest.WriteFile(t, repo, "untracked.txt", "also at fork point")
 
 	main := NewLocalGitSandbox(repo)
 	forkState, err := main.Capture(ctx)
@@ -275,10 +252,10 @@ func TestWorktreeSandbox_ApplySeedsForkState(t *testing.T) {
 		t.Fatalf("worktree Apply: %v", err)
 	}
 
-	if got := readFile(t, wtPath, "README.md"); got != "# Fork point" {
+	if got := gittest.ReadFile(t, wtPath, "README.md"); got != "# Fork point" {
 		t.Errorf("worktree README.md = %q, want the parent's dirty content", got)
 	}
-	if got := readFile(t, wtPath, "untracked.txt"); got != "also at fork point" {
+	if got := gittest.ReadFile(t, wtPath, "untracked.txt"); got != "also at fork point" {
 		t.Errorf("worktree untracked.txt = %q, want the parent's untracked file", got)
 	}
 }
@@ -299,7 +276,7 @@ func TestWorktreeSandbox_SiblingsAreIndependent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = wtB.Destroy(context.Background()) })
 
-	writeFile(t, filepath.Join(root, "a"), "only-a.txt", "variant A")
+	gittest.WriteFile(t, filepath.Join(root, "a"), "only-a.txt", "variant A")
 	if fileExists(t, filepath.Join(root, "b"), "only-a.txt") {
 		t.Error("a file written in worktree A must not appear in worktree B")
 	}
@@ -334,7 +311,7 @@ func TestWorktreeSandbox_CaptureAppliesToMainTree(t *testing.T) {
 	}
 
 	// Speculative work happens only in the worktree.
-	writeFile(t, wtPath, "feature.txt", "from worktree")
+	gittest.WriteFile(t, wtPath, "feature.txt", "from worktree")
 	if fileExists(t, repo, "feature.txt") {
 		t.Fatal("the main tree must not see worktree changes before Apply")
 	}
@@ -354,7 +331,7 @@ func TestWorktreeSandbox_CaptureAppliesToMainTree(t *testing.T) {
 	if err := main.Apply(ctx, variant); err != nil {
 		t.Fatalf("apply variant to main tree: %v", err)
 	}
-	if got := readFile(t, repo, "feature.txt"); got != "from worktree" {
+	if got := gittest.ReadFile(t, repo, "feature.txt"); got != "from worktree" {
 		t.Errorf("feature.txt = %q, want the variant's content", got)
 	}
 }
@@ -381,7 +358,7 @@ func TestWorktreeSandbox_DestroyRetriesOnBusyDirectory(t *testing.T) {
 
 	// A lock file inside the worktree makes `git worktree remove` fail on
 	// some platforms; the fallback must still leave nothing behind.
-	writeFile(t, wtPath, ".git-lock-probe", "x")
+	gittest.WriteFile(t, wtPath, ".git-lock-probe", "x")
 	time.Sleep(10 * time.Millisecond)
 
 	if err := sb.Destroy(ctx); err != nil {
@@ -390,8 +367,8 @@ func TestWorktreeSandbox_DestroyRetriesOnBusyDirectory(t *testing.T) {
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("worktree should be gone, stat err=%v", err)
 	}
-	for _, p := range worktreePaths(t, repo) {
-		if samePath(t, p, wtPath) {
+	for _, p := range gittest.WorktreePaths(t, repo) {
+		if gittest.SamePath(t, p, wtPath) {
 			t.Errorf("worktree %s still registered after Destroy", p)
 		}
 	}
@@ -405,10 +382,10 @@ func TestGitSandbox_CapturePreservesCallerIndex(t *testing.T) {
 	repo := newTestRepo(t)
 
 	// Caller stages a tracked-file edit and leaves an untracked file.
-	writeFile(t, repo, "README.md", "# Staged edit")
+	gittest.WriteFile(t, repo, "README.md", "# Staged edit")
 	mustGit(t, repo, "add", "README.md")
-	writeFile(t, repo, "untracked.txt", "untracked")
-	stagedBefore := stagedFiles(t, repo)
+	gittest.WriteFile(t, repo, "untracked.txt", "untracked")
+	stagedBefore := gittest.StagedFiles(t, repo)
 	if stagedBefore != "README.md" {
 		t.Fatalf("precondition: staged = %q, want %q", stagedBefore, "README.md")
 	}
@@ -419,7 +396,7 @@ func TestGitSandbox_CapturePreservesCallerIndex(t *testing.T) {
 		t.Fatalf("Capture: %v", err)
 	}
 
-	if stagedAfter := stagedFiles(t, repo); stagedAfter != stagedBefore {
+	if stagedAfter := gittest.StagedFiles(t, repo); stagedAfter != stagedBefore {
 		t.Errorf("Capture mutated the caller's index: staged %q, want %q", stagedAfter, stagedBefore)
 	}
 	if stash, _ := ws.Data["stash_sha"].(string); stash == "" {
@@ -442,15 +419,15 @@ func TestGitSandbox_CapturePreservesCallerIndex(t *testing.T) {
 func TestGitSandbox_DiffPreservesCallerIndex(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestRepo(t)
-	base := mustHead(t, repo)
+	base := gittest.MustHead(t, repo)
 
-	writeFile(t, repo, "README.md", "# Staged edit")
+	gittest.WriteFile(t, repo, "README.md", "# Staged edit")
 	mustGit(t, repo, "add", "README.md")
-	writeFile(t, repo, "brand-new.txt", "untracked")
-	stagedBefore := stagedFiles(t, repo)
+	gittest.WriteFile(t, repo, "brand-new.txt", "untracked")
+	stagedBefore := gittest.StagedFiles(t, repo)
 
 	sb := NewLocalGitSandbox(repo)
-	diff, files, err := sb.Diff(ctx, WorkspaceState{Backend: "git", Revision: base}, 0)
+	diff, files, err := sb.Diff(ctx, trace.WorkspaceState{Backend: "git", Revision: base}, 0)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -467,7 +444,19 @@ func TestGitSandbox_DiffPreservesCallerIndex(t *testing.T) {
 		t.Errorf("changed files = %v, want brand-new.txt", files)
 	}
 
-	if stagedAfter := stagedFiles(t, repo); stagedAfter != stagedBefore {
+	if stagedAfter := gittest.StagedFiles(t, repo); stagedAfter != stagedBefore {
 		t.Errorf("Diff mutated the caller's index: staged %q, want %q", stagedAfter, stagedBefore)
 	}
+}
+
+func newTestRepo(t *testing.T) string { return gittest.NewTestRepo(t) }
+
+func requireGit(t *testing.T) { gittest.RequireGit(t) }
+
+func mustGit(t *testing.T, dir string, args ...string) { gittest.MustGit(t, dir, args...) }
+
+func fileExists(t *testing.T, dir, name string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
 }

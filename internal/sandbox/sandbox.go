@@ -1,9 +1,10 @@
-package shepherd
+package sandbox
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"io/fs"
 	"sort"
 	"strings"
@@ -39,9 +40,9 @@ type SandboxCapabilities struct {
 	// filesystem. A false value means the backend mutates the host tree
 	// in place.
 	Isolated bool
-	// Containment is the witness-level containment classification for the
+	// trace.Containment is the witness-level containment classification for the
 	// substrate, stamped into trace witnesses and retained contexts.
-	Containment Containment
+	Containment trace.Containment
 }
 
 // SandboxSpec carries per-call runtime options for Create. Backend-specific
@@ -113,18 +114,18 @@ type Sandbox interface {
 	Destroy(ctx context.Context) error
 
 	// Capture records the current workspace state. Non-mutating.
-	Capture(ctx context.Context) (WorkspaceState, error)
+	Capture(ctx context.Context) (trace.WorkspaceState, error)
 
 	// Apply resets the workspace to a previously captured state. The git
 	// backend's state is reusable; a snapshot-backed backend may instead
 	// provision fresh resources and rebind its identity, making Apply
 	// single-use per state. Callers must not assume reuse unless
 	// Capabilities documents it.
-	Apply(ctx context.Context, ws WorkspaceState) error
+	Apply(ctx context.Context, ws trace.WorkspaceState) error
 
 	// Diff returns the unified diff and changed file paths between ws and the
 	// current workspace. maxLines <= 0 means unbounded. Non-mutating.
-	Diff(ctx context.Context, ws WorkspaceState, maxLines int) (diff string, files []string, err error)
+	Diff(ctx context.Context, ws trace.WorkspaceState, maxLines int) (diff string, files []string, err error)
 
 	// Exec runs a command in the sandbox and returns its result.
 	Exec(ctx context.Context, req ExecRequest) (ExecResult, error)
@@ -156,7 +157,7 @@ type DeltaApplier interface {
 	// ApplyDelta merges the changes captured in delta onto the current
 	// workspace. A delta with no changes (a clean capture) is a no-op.
 	// A conflicting delta returns an error and consumes nothing.
-	ApplyDelta(ctx context.Context, delta WorkspaceState) error
+	ApplyDelta(ctx context.Context, delta trace.WorkspaceState) error
 }
 
 // --- Sandbox backend registry ---

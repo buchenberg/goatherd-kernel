@@ -1,9 +1,10 @@
-package shepherd
+package sandbox
 
 import (
 	"bytes"
 	"context"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -173,13 +174,13 @@ func (g *gitRunner) isRepo(ctx context.Context) bool {
 //
 //   - In-place (NewLocalGitSandbox): operates directly on the caller's
 //     repository. It is a materializer, not an isolation boundary, so
-//     Isolated is false and Containment is ContainUncontained. Create
+//     Isolated is false and trace.Containment is trace.ContainUncontained. Create
 //     validates that the path is a repository and Destroy is a no-op — a
 //     sandbox must never delete a user's repository.
 //
 //   - Worktree (NewWorktreeSandbox): allocates a detached `git worktree` for
 //     the scope. Create and Destroy manage real resources, Isolated is true,
-//     and Containment is ContainBuffered: effects are held in a separate
+//     and trace.Containment is trace.ContainBuffered: effects are held in a separate
 //     checkout and only graduate when the caller applies that state to the
 //     parent's in-place sandbox.
 //
@@ -238,7 +239,7 @@ func (g *GitSandbox) Capabilities() SandboxCapabilities {
 			FileIO:      false,
 			Diff:        true,
 			Isolated:    true,
-			Containment: ContainBuffered,
+			Containment: trace.ContainBuffered,
 		}
 	}
 	return SandboxCapabilities{
@@ -247,7 +248,7 @@ func (g *GitSandbox) Capabilities() SandboxCapabilities {
 		FileIO:      false,
 		Diff:        true,
 		Isolated:    false,
-		Containment: ContainUncontained,
+		Containment: trace.ContainUncontained,
 	}
 }
 
@@ -326,35 +327,35 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 	return nil
 }
 
-// Capture records the current workspace state as a reusable WorkspaceState.
+// Capture records the current workspace state as a reusable trace.WorkspaceState.
 //
 // The working tree — including untracked files — is staged into a scratch index
 // (never the caller's), `git stash create` turns it into an unreferenced commit
 // SHA, and HEAD is recorded. The stash is not popped, so the working tree is
 // unchanged and a caller that had staged changes keeps them staged.
-func (g *GitSandbox) Capture(ctx context.Context) (WorkspaceState, error) {
+func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) {
 	w := g.work()
 	if !w.isRepo(ctx) {
-		return WorkspaceState{}, fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
+		return trace.WorkspaceState{}, fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
 	}
 
 	index, cleanupIndex, err := w.stagedIndex(ctx)
 	if err != nil {
-		return WorkspaceState{}, fmt.Errorf("capture: %w", err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture: %w", err)
 	}
 	defer cleanupIndex()
 
 	stashSHA, err := w.stashCreate(ctx, index)
 	if err != nil {
-		return WorkspaceState{}, fmt.Errorf("capture: git stash create: %w", err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture: git stash create: %w", err)
 	}
 
 	headSHA, err := w.headSHA(ctx)
 	if err != nil {
-		return WorkspaceState{}, fmt.Errorf("capture: git rev-parse HEAD: %w", err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture: git rev-parse HEAD: %w", err)
 	}
 
-	return WorkspaceState{
+	return trace.WorkspaceState{
 		Backend:  "git",
 		Revision: headSHA,
 		Data: map[string]any{
@@ -367,7 +368,7 @@ func (g *GitSandbox) Capture(ctx context.Context) (WorkspaceState, error) {
 // Apply resets the workspace to a captured state. The state is reusable: Apply
 // consumes nothing, so the same value may be applied repeatedly (this is what
 // fork-and-choose needs).
-func (g *GitSandbox) Apply(ctx context.Context, ws WorkspaceState) error {
+func (g *GitSandbox) Apply(ctx context.Context, ws trace.WorkspaceState) error {
 	if ws.Backend != "git" {
 		return fmt.Errorf("git sandbox: cannot apply state from backend %q", ws.Backend)
 	}
@@ -406,7 +407,7 @@ func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) e
 //
 // Untracked files are made visible through a scratch index, so Diff is
 // non-mutating: it never touches the caller's index, matching Capture.
-func (g *GitSandbox) Diff(ctx context.Context, ws WorkspaceState, maxLines int) (string, []string, error) {
+func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines int) (string, []string, error) {
 	if ws.Backend != "git" {
 		return "", nil, fmt.Errorf("git sandbox: cannot diff state from backend %q", ws.Backend)
 	}
@@ -466,7 +467,7 @@ func (g *GitSandbox) Exec(context.Context, ExecRequest) (ExecResult, error) {
 //
 // A delta with an empty stash_sha (a clean capture) is a no-op: there is
 // nothing to merge.
-func (g *GitSandbox) ApplyDelta(ctx context.Context, delta WorkspaceState) error {
+func (g *GitSandbox) ApplyDelta(ctx context.Context, delta trace.WorkspaceState) error {
 	if delta.Backend != "git" {
 		return fmt.Errorf("git sandbox: cannot apply delta from backend %q", delta.Backend)
 	}
