@@ -153,6 +153,9 @@ Special cases, stated so no implementation reintroduces the silent no-op:
   `stash_sha` key is *present but empty* is a legitimate legacy clean
   capture — a no-op, not an error — and must stay distinguishable from
   the malformed shape.
+- a delta with `tree_sha` but no `base_tree_sha` is equally **malformed**:
+  the baseline-relative merge has no base, and falling back to HEAD would
+  reintroduce U1b's baseline self-overlap. It errors.
 - a legacy `stash_sha`-carrying delta (empty or not) keeps the
   stash-apply path unchanged, with the empty case the no-op above.
 
@@ -280,7 +283,8 @@ in Phase D.
     child deletion lands, and a conflicting delta refuses typed with the
     parent untouched;
   - `ApplyDelta` on a no-change delta (`tree_sha == base_tree_sha`) is a
-    no-op; a malformed delta (no recognizable key) errors, while a legacy
+    no-op; malformed deltas error — both the no-recognizable-key shape
+    and the `tree_sha`-without-`base_tree_sha` shape — while a legacy
     clean-capture delta (`stash_sha` present but empty) stays a no-op;
   - legacy-state apply and apply-delta still work (fixtures with
     `stash_sha` payloads);
@@ -362,11 +366,12 @@ incompatibility and its sole consumer is coordinated.
   plus `base_tree_sha` on sealed outputs) touches recorded states. All
   vectors updated in Phase A; old traces are read-compatible by the legacy
   apply paths.
-- **git plumbing portability**: `write-tree` and `read-tree -u` are
-  ancient stable plumbing — lower risk than the `stash create` behavior
+- **git plumbing portability**: `write-tree` and `read-tree --reset -u`
+  are ancient stable plumbing — lower risk than the `stash create` behavior
   this replaces; `merge-tree --write-tree` is the youngest command
-  involved and is risk-tracked above (a `checkout-index`-based landing
-  step, if chosen, is ancient plumbing too). CI runs all three OSes; the
+  involved and is risk-tracked above (the ApplyDelta landing step's write
+  mechanism is an implementation choice already governed by the design's
+  semantics, not a named dependency). CI runs all three OSes; the
   yaah experience (symlinked temp dirs, 8.3 names) says path
   *comparisons* are the portability hazard, and neither digest nor diff
   compares paths.
