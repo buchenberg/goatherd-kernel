@@ -229,7 +229,10 @@ capability, not a kernel-wide breaking change):
 ```go
 // Addressed is an optional Sandbox capability: the backend's durable
 // address — the worktree path for a git worktree, the repository path
-// for a materializer, a snapshot handle for snapshot-backed backends.
+// for a materializer, the workspace path for a path-addressed container
+// backend. (A backend whose identity is not a path must not implement
+// this yet — recovery's absolute-path validation could not carry it —
+// and stays a recorded follow-up.)
 // Recovery records it in the fork payload and hands it back to the
 // host's resolver, so an isolated child's substrate is re-adoptable
 // from the trace alone.

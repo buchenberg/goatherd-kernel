@@ -3,11 +3,13 @@ package shepherd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
@@ -500,7 +502,9 @@ func TestRecover_ResolverReceivesRecordedAddress(t *testing.T) {
 
 	// Crash: reopen and recover. The resolver re-adopts the child from the
 	// recorded address alone — the worktree path comes from the record,
-	// not from host memory of the fork.
+	// and the repository is derived from the worktree itself (a git
+	// worktree carries its repository link), so nothing about the fork is
+	// held in host memory beyond what recovery hands over.
 	reopened := reopenStore(t, store, path)
 	calls := map[string][2]string{}
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
@@ -510,7 +514,15 @@ func TestRecover_ResolverReceivesRecordedAddress(t *testing.T) {
 			case "scope:rec:addr:parent":
 				return git.NewLocalGitSandbox(repo), nil
 			case "scope:rec:addr:child":
-				return git.NewWorktreeSandbox(repo, path), nil
+				common, err := gittest.Run(t, path, "rev-parse", "--git-common-dir")
+				if err != nil {
+					return nil, fmt.Errorf("derive the repository from the recorded worktree %s: %w", path, err)
+				}
+				repoFromRecord := filepath.Dir(common)
+				if !filepath.IsAbs(repoFromRecord) {
+					repoFromRecord = filepath.Join(path, repoFromRecord)
+				}
+				return git.NewWorktreeSandbox(repoFromRecord, path), nil
 			}
 			return nil, nil
 		},

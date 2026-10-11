@@ -1032,10 +1032,12 @@ func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 }
 
 // TestGitSandbox_AddressIsNormalizedAbsolute pins the Addressed contract:
-// even a relative construction path is recorded as a normalized absolute
-// address — a raw relative path persisted in a trace and replayed after a
-// restart under a different working directory would address the wrong
-// location (plan 06, U2).
+// the recorded address is a normalized absolute path, and a relative
+// worktree path is resolved against the repository — the way
+// `git worktree add` resolves it, since Create runs with the repository as
+// its working directory — never against the process working directory
+// (plan 06, U2). The CWD is deliberately moved away from the repository to
+// prove the resolution base.
 func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
 	repo := newTestRepo(t)
 
@@ -1043,31 +1045,31 @@ func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
 		t.Errorf("local sandbox address %q is not absolute", got)
 	}
 
-	// A relative worktree path must still record an absolute address.
-	wt := filepath.Join(t.TempDir(), "wt")
-	if err := os.MkdirAll(wt, 0o755); err != nil {
-		t.Fatalf("mkdir worktree: %v", err)
-	}
+	// A relative worktree path: the address must land beside the
+	// repository, not beside whatever directory the process happens to
+	// run in. The process directory is moved away from the repository
+	// (and restored before the test returns — these tests do not run in
+	// parallel, so the process-global move is contained) to prove the
+	// resolution base.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	if err := os.Chdir(repo); err != nil {
-		t.Fatalf("chdir: %v", err)
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir away from the repository: %v", err)
 	}
-	// Restore the original working directory, not a fresh temp one: on
-	// Windows a process holding its CWD inside a directory blocks the
-	// test framework's RemoveAll cleanup.
-	t.Cleanup(func() { _ = os.Chdir(wd) })
-	rel := filepath.Join(".", "rel-wt")
-	if err := os.Symlink(wt, filepath.Join(repo, "rel-wt")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
-	got := NewWorktreeSandbox(repo, rel).Address()
+	defer func() { _ = os.Chdir(wd) }()
+	got := NewWorktreeSandbox(repo, "relative-wt").Address()
 	if !filepath.IsAbs(got) {
-		t.Errorf("worktree address %q recorded from a relative path is not absolute", got)
+		t.Fatalf("worktree address %q recorded from a relative path is not absolute", got)
 	}
-	if want, err := filepath.Abs(rel); err == nil && got != want {
-		t.Errorf("worktree address = %q, want the normalized %q", got, want)
+	if want := filepath.Join(filepath.Clean(repo), "relative-wt"); got != want {
+		t.Errorf("worktree address = %q, want the repository-relative %q", got, want)
+	}
+
+	// An absolute worktree path is cleaned and recorded verbatim.
+	abs := filepath.Join(t.TempDir(), "abs-wt")
+	if got := NewWorktreeSandbox(repo, abs).Address(); got != abs {
+		t.Errorf("worktree address = %q, want the given absolute %q", got, abs)
 	}
 }

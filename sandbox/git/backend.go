@@ -232,6 +232,13 @@ var _ sbx.Addressed = (*GitSandbox)(nil)
 // relative path persisted in a trace and replayed after a restart under a
 // different working directory would address the wrong location, so the
 // address is resolved eagerly, at construction — not at read time.
+//
+// Abs fails only pathologically (a relative path while the process working
+// directory is unresolvable); the input is returned unchanged in that case,
+// which leaves the sandbox effectively unaddressed — forkScope records the
+// address and recovery validates it, so a non-absolute address never
+// silently persists: it is either recorded as-is and rejected loudly at
+// recovery, or absent from the record and treated as unaddressed.
 func absAddress(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs
@@ -247,10 +254,17 @@ func NewLocalGitSandbox(repoPath string) *GitSandbox {
 // NewWorktreeSandbox returns an isolated sandbox that checks out repoPath at a
 // detached worktree in worktreePath. repoPath remains the source of truth for
 // git administrative commands; worktreePath is where workspace operations run.
-// worktreePath may be relative; the recorded address is normalized to an
-// absolute path.
+// A relative worktreePath is resolved against the repository — the same way
+// `git worktree add` resolves it, since Create runs with the repository as
+// its working directory — never against the process working directory, so
+// the recorded address matches where the worktree actually lands. The
+// recorded address is normalized to an absolute path.
 func NewWorktreeSandbox(repoPath, worktreePath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(worktreePath)}
+	wt := worktreePath
+	if !filepath.IsAbs(wt) {
+		wt = filepath.Join(absAddress(repoPath), wt)
+	}
+	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(wt)}
 }
 
 // Address implements sbx.Addressed: the durable workspace address, a
