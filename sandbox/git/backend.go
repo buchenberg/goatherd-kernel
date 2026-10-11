@@ -217,23 +217,62 @@ func (g *gitRunner) isRepo(ctx context.Context) bool {
 type GitSandbox struct {
 	repoPath     string
 	worktreePath string
+	// address is the durable workspace address (plan 06, U2), normalized
+	// to an absolute path at construction: the worktree path for an
+	// isolated worktree, the repository path otherwise.
+	address string
 }
 
 var _ sbx.Sandbox = (*GitSandbox)(nil)
 var _ sbx.DeltaApplier = (*GitSandbox)(nil)
 var _ sbx.DeltaBaseAnnotator = (*GitSandbox)(nil)
+var _ sbx.Addressed = (*GitSandbox)(nil)
+
+// absAddress normalizes a workspace path to an absolute one. A raw
+// relative path persisted in a trace and replayed after a restart under a
+// different working directory would address the wrong location, so the
+// address is resolved eagerly, at construction — not at read time.
+//
+// Abs fails only pathologically (a relative path while the process working
+// directory is unresolvable); the input is returned unchanged in that case,
+// which leaves the sandbox effectively unaddressed — forkScope records the
+// address and recovery validates it, so a non-absolute address never
+// silently persists: it is either recorded as-is and rejected loudly at
+// recovery, or absent from the record and treated as unaddressed.
+func absAddress(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
 
 // NewLocalGitSandbox returns an in-place sandbox over repoPath.
 func NewLocalGitSandbox(repoPath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath}
+	return &GitSandbox{repoPath: repoPath, address: absAddress(repoPath)}
 }
 
 // NewWorktreeSandbox returns an isolated sandbox that checks out repoPath at a
 // detached worktree in worktreePath. repoPath remains the source of truth for
 // git administrative commands; worktreePath is where workspace operations run.
+// A relative worktreePath is resolved against the repository — the same way
+// `git worktree add` resolves it, since Create runs with the repository as
+// its working directory — never against the process working directory, so
+// the recorded address matches where the worktree actually lands. The
+// recorded address is normalized to an absolute path.
 func NewWorktreeSandbox(repoPath, worktreePath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath}
+	wt := worktreePath
+	if !filepath.IsAbs(wt) {
+		wt = filepath.Join(absAddress(repoPath), wt)
+	}
+	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(wt)}
 }
+
+// Address implements sbx.Addressed: the durable workspace address, a
+// normalized absolute path — the worktree path when isolated, the
+// repository path otherwise. Recovery records it in the fork payload and
+// hands it back to the host's resolver, so an isolated child's substrate
+// is re-adoptable from the trace alone.
+func (g *GitSandbox) Address() string { return g.address }
 
 // Backend identifies the backend.
 func (g *GitSandbox) Backend() string { return "git" }

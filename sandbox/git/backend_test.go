@@ -1030,3 +1030,46 @@ func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 		t.Errorf("pinTree with a correct existing ref failed: %v; a sibling's identical pin must be success", err)
 	}
 }
+
+// TestGitSandbox_AddressIsNormalizedAbsolute pins the Addressed contract:
+// the recorded address is a normalized absolute path, and a relative
+// worktree path is resolved against the repository — the way
+// `git worktree add` resolves it, since Create runs with the repository as
+// its working directory — never against the process working directory
+// (plan 06, U2). The CWD is deliberately moved away from the repository to
+// prove the resolution base.
+func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
+	repo := newTestRepo(t)
+
+	if got := NewLocalGitSandbox(repo).Address(); !filepath.IsAbs(got) {
+		t.Errorf("local sandbox address %q is not absolute", got)
+	}
+
+	// A relative worktree path: the address must land beside the
+	// repository, not beside whatever directory the process happens to
+	// run in. The process directory is moved away from the repository
+	// (and restored before the test returns — these tests do not run in
+	// parallel, so the process-global move is contained) to prove the
+	// resolution base.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir away from the repository: %v", err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+	got := NewWorktreeSandbox(repo, "relative-wt").Address()
+	if !filepath.IsAbs(got) {
+		t.Fatalf("worktree address %q recorded from a relative path is not absolute", got)
+	}
+	if want := filepath.Join(filepath.Clean(repo), "relative-wt"); got != want {
+		t.Errorf("worktree address = %q, want the repository-relative %q", got, want)
+	}
+
+	// An absolute worktree path is cleaned and recorded verbatim.
+	abs := filepath.Join(t.TempDir(), "abs-wt")
+	if got := NewWorktreeSandbox(repo, abs).Address(); got != abs {
+		t.Errorf("worktree address = %q, want the given absolute %q", got, abs)
+	}
+}

@@ -200,6 +200,26 @@ type DeltaBaseAnnotator interface {
 	AnnotateDeltaBase(ctx context.Context, delta *trace.WorkspaceState, baseline trace.WorkspaceState) error
 }
 
+// Addressed is an optional Sandbox capability: the backend's durable
+// workspace address — the worktree path for a git worktree, the repository
+// path for a materializer, the container workspace path for a
+// path-addressed container backend. Recovery records it in the fork
+// payload and hands it back to the host's resolver, so an isolated child's
+// substrate is re-adoptable from the trace alone (plan 06, U2).
+//
+// The address must be a normalized absolute path: a raw relative path
+// persisted in a trace and replayed after a restart under a different
+// working directory would address the wrong location, and recovery
+// rejects a recorded non-absolute address loudly. A backend whose
+// identity is not a path must not implement this interface yet — its
+// handle could not survive the path validation — and stays a recorded
+// follow-up instead.
+type Addressed interface {
+	// Address returns the backend's durable address as a normalized
+	// absolute path.
+	Address() string
+}
+
 // --- Sandbox backend registry ---
 
 // ErrUnknownSandboxBackend is the sentinel behind UnknownSandboxBackendError,

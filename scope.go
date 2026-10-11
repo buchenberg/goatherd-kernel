@@ -221,7 +221,7 @@ func (s *Scope) Fork(childOwnerID string, snapshot any) (*Scope, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.forkWithBaseline(childOwnerID, snapshot, baseline, false, "")
+	return s.forkWithBaseline(childOwnerID, snapshot, baseline, false, "", "")
 }
 
 // forkWithBaseline is Fork after the baseline decision, so the scope
@@ -229,8 +229,11 @@ func (s *Scope) Fork(childOwnerID string, snapshot any) (*Scope, error) {
 // a subprocess bounded by gitTimeout; the registry must not wait on it)
 // and still register atomically. isolated records that the child was
 // forked with its own substrate, which is what recovery needs to know
-// whether a re-adopted sandbox belongs to the child alone.
-func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline trace.WorkspaceState, isolated bool, sandboxBackend string) (*Scope, error) {
+// whether a re-adopted sandbox belongs to the child alone. sandboxPath is
+// the substrate's durable address, extracted by the manager from the
+// sandbox's Addressed capability (empty for unaddressed backends) and
+// recorded so recovery can hand it to the host's resolver.
+func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline trace.WorkspaceState, isolated bool, sandboxBackend, sandboxPath string) (*Scope, error) {
 	s.mu.Lock()
 	if s.state != ScopeActive {
 		s.mu.Unlock()
@@ -254,6 +257,9 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 		forkPayload["isolated"] = true
 		if sandboxBackend != "" {
 			forkPayload["sandbox_backend"] = sandboxBackend
+		}
+		if sandboxPath != "" {
+			forkPayload["sandbox_path"] = sandboxPath
 		}
 	}
 	if baseline.Backend != "" {

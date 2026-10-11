@@ -127,8 +127,11 @@ re-adopt and which to orphan-clean:
 
 ```go
 mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{
-    Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
-        return mySandboxFor(scopeID) // nil = recover this scope causally only
+    // backend and path come from the fork record the trace durably holds;
+    // both are empty for roots, and shared children are never resolved —
+    // they inherit the parent's re-adopted sandbox.
+    Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
+        return mySandboxFor(scopeID, backend, path) // nil = recover this scope causally only
     },
 })
 // The tree, terminal states, fork baselines, checkpoints, and retained
