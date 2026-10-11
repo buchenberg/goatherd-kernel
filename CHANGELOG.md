@@ -4,6 +4,17 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+### Added
+- **`traceui` — a read-only HTTP projection of a trace store** (the
+  server half of the trace visualizer): `/api/records` serves the slice
+  under an owner path prefix with payloads, causal edges, and frontier;
+  `/api/events` streams one server-sent event per appended record when an
+  effect bus is attached (embedded mode). `cmd/traceui` is a standalone
+  read-only viewer for an existing trace file. The browser client lives in
+  a separate repository and consumes this contract.
+
 ## [v0.11.0] - 2026-10-10
 
 The module is now organized as public component packages. The component

@@ -296,6 +296,36 @@ write files in chunks and the world may have changed without a trace. The
 reference KV substrate (`substrate.NewKVSubstrate`) keeps a world-side SQLite
 store separate from the trace, and the echo substrate is the test fixture.
 
+## Trace UI service
+
+The `traceui` package serves a read-only HTTP projection of a trace store —
+the server half of the trace visualizer; the browser client lives in its own
+repository and consumes this contract:
+
+```go
+store, _ := trace.NewSQLiteTraceStore("trace.sqlite")
+bus := trace.NewEffectBus(64)
+store.WithBus(bus)
+svc, _ := traceui.New(traceui.Config{Store: store, Bus: bus})
+http.Handle("/", svc.Handler()) // mount anywhere; embeds in the writer for live events
+```
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /api/health` | liveness, bus presence, fact count |
+| `GET /api/records?path=&through=&mode=` | records under an owner path prefix (empty spans all owners), with payloads, causal edges, and the resolved frontier; ordinal cutoff and mode filter optional |
+| `GET /api/events` | server-sent events, one `effect` per appended record — requires the bus (embedded mode); without one it answers 503 and the client polls `/api/records` |
+
+Records carry id, digest, schema, mode, kind, owner, per-owner ordinal,
+context and witness refs, causal parents, and — under the trusted read the
+service performs — the retained payload. Witness records appear on their own
+`kernel:witness` owner path. The bus is non-blocking: a stalled client drops
+events and repairs by re-reading `/api/records`; the content-addressed ids
+make the merge trivial.
+
+`cmd/traceui` is a standalone read-only viewer for an existing trace file
+(`traceui -db trace.sqlite -addr 127.0.0.1:8321`) — no bus, so clients poll.
+
 ## Architecture
 
 ### Package layout
