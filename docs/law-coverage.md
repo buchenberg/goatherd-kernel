@@ -55,9 +55,9 @@ their original home. Cross-language digest laws are additionally pinned by
 | 18 | test_causal_closure_policy_controls_filtered_parent_anchors | `TestLawCausalClosurePolicyControlsFilteredParentAnchors`. The final Python sub-case — calling `read_causal_closure` with no policy is a `TypeError` — is not portable: Go's signature requires the argument, so the compiler rejects the call | ✅ (sub-case by construction) |
 | 19 | test_causal_closure_mode_filter_does_not_prune_traversal | `TestLawCausalClosureModeFilterDoesNotPruneTraversal` — **required the `canonicalFactOrder` fix** | ✅ |
 | 20 | test_full_internal_reads_require_trusted_authority | `TestLawFullInternalReadsRequireTrustedAuthority` | ✅ |
-| 21 | test_cut_slice_mode_and_projection_laws | Mode-filter half: `TestLawCutSliceModeLaws`. Projection half: **plan 02 dependency** — `ProjectionSpec`/`ensure_projection_compatible`/`project_execution_slice` do not exist in the Go port yet | 🔄 mode ✅, projection → plan 02 |
+| 21 | test_cut_slice_mode_and_projection_laws | Mode-filter half: `TestLawCutSliceModeLaws`. Projection half: `TestLawCutSliceProjectionLaws` — the both-filtered cut projects, task_ref folds back, no fact appended | ✅ |
 | 22 | test_later_records_do_not_change_published_cut | `TestFrontierIsImmutable` (store_test.go) — cut resolves to the pre-cut facts while the owner prefix has grown | ✅ |
-| 23 | test_projection_fails_on_incompatible_mode_filter | **Plan 02 dependency** — the projection-compatibility API lands with the schema library (plan 02, T2a.4); re-evaluate there. The underlying mode-filter behavior the projection depends on is pinned by law 21's mode half | ⬜ plan 02 |
+| 23 | test_projection_fails_on_incompatible_mode_filter | `TestProjectionFailsOnIncompatibleModeFilter` — the gate refuses a both slice for a declarations_only spec with `ErrProjectionMode`; the fold-level refusal is separately pinned at `execution_test.go` (captures_only fed to `ProjectExecution`) | ✅ |
 | 24 | test_operation_context_does_not_cross_authorize_cut_publication | Covered **by construction**: Go's `AppendContext` carries no operation — each store method fixes its own `OperationKind` via `ToOperationContext`, so a caller cannot present an append context to `PublishCut`. The Python law guards an API shape Go does not expose; `TestReservedOperationKindsAreUnreachable` pins the adjacent reserved-kind behavior | ✅ by construction |
 | 25 | test_restart_preserves_records_cuts_and_paths | `TestLawRestartPreservesRecordsCutsAndPaths`; record-restart also pinned by `TestAppendReadAcrossRestart` and the conformance suite's restart case | ✅ |
 
@@ -65,7 +65,8 @@ their original home. Cross-language digest laws are additionally pinned by
 
 A change that touches `store.go`'s append, read, or frontier paths must keep
 every law green — `go test -run TestLaw ./...` is the quick gate. New laws
-added upstream get a row here and a test in `laws_test.go` in the same change;
-the two plan-02 dependencies (laws 21 projection half, 23) are the only
-accepted gaps, and each must flip to ✅ in the change that lands plan 02's
-schema library.
+added upstream get a row here and a test in `laws_test.go` in the same change.
+There are no accepted gaps: the two former plan-02 dependencies (law 21's
+projection half, law 23) flipped to ✅ when the schema library and its
+projection gate landed in v0.6.0 — the map had lagged the tree — and are
+now pinned in `laws_test.go`.

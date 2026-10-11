@@ -16,6 +16,7 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -808,6 +809,96 @@ func TestLawCutSliceModeLaws(t *testing.T) {
 	}
 	if after != before {
 		t.Errorf("fact count moved %d → %d: a read must not append", before, after)
+	}
+}
+
+// TestLawCutSliceProjectionLaws ports the projection half of
+// test_cut_slice_mode_and_projection_laws — the half the mode-filter law
+// above deferred until the execution schemas and the projection gate
+// landed (they did, with plan 02 / v0.6.0). The projection folds over the
+// both-filtered cut, yields the execution's declared task_ref, and is pure:
+// no fact is appended.
+func TestLawCutSliceProjectionLaws(t *testing.T) {
+	store := newMemStore(t)
+	executionID := ExecutionIDFor("law:execution:create", "create")
+	receipt, err := store.Append(context.Background(), lawAppend, CreateExecutionBatch(
+		"law:execution:create", executionID, "LawTask", map[string]any{"x": 1}, "", nil))
+	if err != nil {
+		t.Fatalf("Append(create execution): %v", err)
+	}
+	cut, err := store.PublishCut(context.Background(), lawAppend, FrontierSpec{
+		FrontierID:         "law:cut:execution",
+		TargetTraceOwnerID: executionID,
+		ThroughFactID:      receipt.FactIDs[len(receipt.FactIDs)-1],
+	})
+	if err != nil {
+		t.Fatalf("PublishCut: %v", err)
+	}
+	before, err := store.FactCount(context.Background())
+	if err != nil {
+		t.Fatalf("FactCount: %v", err)
+	}
+
+	both, err := store.ResolveCut(context.Background(), lawReader, cut.FrontierID, ModeBoth)
+	if err != nil {
+		t.Fatalf("ResolveCut(both): %v", err)
+	}
+	projected, err := ProjectExecution(both, executionID, &cut)
+	if err != nil {
+		t.Fatalf("ProjectExecution: %v", err)
+	}
+	if projected.TaskRef != "LawTask" {
+		t.Errorf("projected task_ref = %q, want %q", projected.TaskRef, "LawTask")
+	}
+
+	after, err := store.FactCount(context.Background())
+	if err != nil {
+		t.Fatalf("FactCount after: %v", err)
+	}
+	if after != before {
+		t.Errorf("fact count moved %d → %d: a projection must not append", before, after)
+	}
+}
+
+// TestProjectionFailsOnIncompatibleModeFilter ports
+// test_projection_fails_on_incompatible_mode_filter: a projection spec that
+// requires declarations_only refuses a both-filtered slice with
+// ErrProjectionMode, loudly rather than folding a wrong view.
+func TestProjectionFailsOnIncompatibleModeFilter(t *testing.T) {
+	store := newMemStore(t)
+	executionID := ExecutionIDFor("law:projection-mode", "create")
+	receipt, err := store.Append(context.Background(), lawAppend, CreateExecutionBatch(
+		"law:projection-mode", executionID, "LawTask", nil, "", nil))
+	if err != nil {
+		t.Fatalf("Append(create execution): %v", err)
+	}
+	cut, err := store.PublishCut(context.Background(), lawAppend, FrontierSpec{
+		FrontierID:         "law:cut:projection-mode",
+		TargetTraceOwnerID: executionID,
+		ThroughFactID:      receipt.FactIDs[len(receipt.FactIDs)-1],
+	})
+	if err != nil {
+		t.Fatalf("PublishCut: %v", err)
+	}
+
+	both, err := store.ResolveCut(context.Background(), lawReader, cut.FrontierID, ModeBoth)
+	if err != nil {
+		t.Fatalf("ResolveCut(both): %v", err)
+	}
+
+	err = EnsureProjectionCompatible(both, ProjectionSpec{
+		Name:            "declaration_projection",
+		ModeRequirement: ProjectionRequiresDeclarations,
+		RequiresPayload: true,
+	})
+	if err == nil {
+		t.Fatal("declarations_only projection over a both slice succeeded, want the gate to refuse")
+	}
+	if !errors.Is(err, ErrProjectionMode) {
+		t.Errorf("gate error = %v, want ErrProjectionMode behind the sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "mode_filter") {
+		t.Errorf("gate error %q should name mode_filter, matching the reference's error text", err.Error())
 	}
 }
 
