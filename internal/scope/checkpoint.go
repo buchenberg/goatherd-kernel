@@ -1,9 +1,11 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 
 	"fmt"
 	"log/slog"
@@ -81,7 +83,7 @@ type Checkpoint struct {
 	// ScopeID is the scope this checkpoint belongs to.
 	ScopeID string
 	// Workspace is the captured backend-neutral workspace state.
-	Workspace WorkspaceState
+	Workspace trace.WorkspaceState
 	// Snapshot is the opaque caller-provided state (typically conversation
 	// history). Released after a successful restore.
 	Snapshot []byte
@@ -96,7 +98,7 @@ type Checkpoint struct {
 //
 // The workspace capture is delegated to the scope's Sandbox, so this works
 // unchanged for an in-place git tree, a detached worktree, or a future
-// container backend. A scope created without a sandbox returns ErrNoSandbox.
+// container backend. A scope created without a sandbox returns sandbox.ErrNoSandbox.
 //
 // The snapshot is persisted durably into the trace database's
 // checkpoint_snapshots table (bounded by the store's checkpoint blob limit;
@@ -116,7 +118,7 @@ func (s *Scope) CreateCheckpoint(ctx context.Context, snapshot []byte) (*Checkpo
 		return nil, fmt.Errorf("cannot checkpoint scope %s in state %s", scopeID, state)
 	}
 	if sb == nil {
-		return nil, ErrNoSandbox
+		return nil, sandbox.ErrNoSandbox
 	}
 
 	ws, err := sb.Capture(ctx)
@@ -150,12 +152,12 @@ func (s *Scope) CreateCheckpoint(ctx context.Context, snapshot []byte) (*Checkpo
 		"state_digest":  digest,
 		"has_snapshot":  len(snapshot) > 0,
 	}
-	_, err = s.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	_, err = s.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:checkpoint:%d", ownerID, seq),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: SchemaCheckpointCreated,
 				KindLabel: "checkpoint:created",
 				Payload:   payload,
@@ -198,7 +200,7 @@ func (s *Scope) RestoreCheckpoint(ctx context.Context, cp *Checkpoint) ([]byte, 
 		return nil, fmt.Errorf("cannot restore in scope %s state %s", scopeID, state)
 	}
 	if sb == nil {
-		return nil, ErrNoSandbox
+		return nil, sandbox.ErrNoSandbox
 	}
 	if cp.ScopeID != scopeID {
 		return nil, fmt.Errorf("checkpoint %s belongs to scope %s, not %s",
@@ -231,12 +233,12 @@ func (s *Scope) RestoreCheckpoint(ctx context.Context, cp *Checkpoint) ([]byte, 
 	}
 
 	digest, _ := cp.Workspace.Digest()
-	_, err := s.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:restore:%d", ownerID, cp.Seq),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaCheckpointRestored,
 				KindLabel: "checkpoint:restored",
 				Payload: map[string]any{

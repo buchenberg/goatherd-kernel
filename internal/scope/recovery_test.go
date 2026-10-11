@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"errors"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,12 +12,12 @@ import (
 
 // reopenStore closes the store and reopens the same database file, the
 // process-restart this suite exists to exercise.
-func reopenStore(t *testing.T, store *SQLiteTraceStore, path string) *SQLiteTraceStore {
+func reopenStore(t *testing.T, store *trace.SQLiteTraceStore, path string) *trace.SQLiteTraceStore {
 	t.Helper()
 	if err := store.Close(context.Background()); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	reopened, err := NewSQLiteTraceStore(path)
+	reopened, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -24,10 +26,10 @@ func reopenStore(t *testing.T, store *SQLiteTraceStore, path string) *SQLiteTrac
 }
 
 // fileStore opens a file-backed store so a "restart" is possible.
-func fileStore(t *testing.T) (*SQLiteTraceStore, string) {
+func fileStore(t *testing.T) (*trace.SQLiteTraceStore, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "trace.db")
-	store, err := NewSQLiteTraceStore(path)
+	store, err := trace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -44,7 +46,7 @@ func TestRecover_RestartRoundTrip(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 
-	parent, err := mgr.Create("rec:parent", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("rec:parent", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -77,13 +79,13 @@ func TestRecover_RestartRoundTrip(t *testing.T) {
 	reopened := reopenStore(t, store, path)
 	resolved := map[string]bool{}
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (Sandbox, error) {
+		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
 			resolved[scopeID] = true
 			switch scopeID {
 			case "scope:rec:parent":
-				return NewLocalGitSandbox(repo), nil
+				return sandbox.NewLocalGitSandbox(repo), nil
 			case "scope:rec:child":
-				return NewWorktreeSandbox(repo, wtPath), nil
+				return sandbox.NewWorktreeSandbox(repo, wtPath), nil
 			}
 			return nil, nil // deliberate non-adoption
 		},
@@ -162,7 +164,7 @@ func TestRecover_TerminalStatesAndPrune(t *testing.T) {
 	store, path := fileStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("term:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("term:parent", sandbox.NewLocalGitSandbox(repo))
 
 	merged, err := mgr.Fork(parent.ID(), "term:merged", nil)
 	if err != nil {
@@ -240,7 +242,7 @@ func TestRecover_CheckpointStaleness(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("stale:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("stale:parent", sandbox.NewLocalGitSandbox(repo))
 
 	// A checkpoint whose base is then left behind by a commit.
 	stale, err := mgr.CreateCheckpoint(ctx, parent.ID(), nil)
@@ -257,8 +259,8 @@ func TestRecover_CheckpointStaleness(t *testing.T) {
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (Sandbox, error) {
-			return NewLocalGitSandbox(repo), nil
+		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
+			return sandbox.NewLocalGitSandbox(repo), nil
 		},
 	})
 	if err != nil {
@@ -291,7 +293,7 @@ func TestRecover_CheckpointConsumedAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("used:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("used:parent", sandbox.NewLocalGitSandbox(repo))
 
 	used, err := mgr.CreateCheckpoint(ctx, parent.ID(), []byte("used"))
 	if err != nil {
@@ -322,7 +324,7 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("out:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("out:parent", sandbox.NewLocalGitSandbox(repo))
 
 	sealedChild, wtSealed := forkWorktreeChild(t, mgr, parent.ID(), "out:sealed", repo, "wt-sealed")
 	if err := os.WriteFile(filepath.Join(wtSealed, "winner.txt"), []byte("wins"), 0o644); err != nil {
@@ -348,12 +350,12 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (Sandbox, error) {
+		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
 			switch scopeID {
 			case "scope:out:parent":
-				return NewLocalGitSandbox(repo), nil
+				return sandbox.NewLocalGitSandbox(repo), nil
 			case "scope:out:sealed":
-				return NewWorktreeSandbox(repo, wtSealed), nil
+				return sandbox.NewWorktreeSandbox(repo, wtSealed), nil
 			}
 			return nil, nil
 		},
@@ -373,7 +375,7 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 	// The unconsumed output is settle-able post-restart: select lands its
 	// changes on the parent. (The parent moved — the earlier select applied
 	// the done child's work — so this is the apply path, exercising the
-	// recovered DeltaApplier.)
+	// recovered sandbox.DeltaApplier.)
 	got, ok := recovered.Output(sealedOut.ID())
 	if !ok {
 		t.Fatal("sealed output not recovered")
@@ -400,14 +402,14 @@ func TestRecover_ResolverOrphanCleans(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("orph:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("orph:parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "orph:child", repo, "wt")
 	_ = child
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (Sandbox, error) {
+		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
 			// The host orphan-cleans the worktree: nothing is re-adopted.
 			return nil, nil
 		},
@@ -437,7 +439,7 @@ func TestCheckpointBlobLimit(t *testing.T) {
 	store := newMemStore(t).WithCheckpointBlobLimit(8)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("limit:parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("limit:parent", sandbox.NewLocalGitSandbox(repo))
 
 	if _, err := mgr.CreateCheckpoint(context.Background(), parent.ID(), []byte("0123456789")); err == nil {
 		t.Error("oversized snapshot must fail the checkpoint")

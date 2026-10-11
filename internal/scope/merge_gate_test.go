@@ -1,29 +1,30 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // findRecords reads an owner's trace and returns the records with the given
 // schema ref, in record order.
-func findRecords(t *testing.T, store *SQLiteTraceStore, ownerID, schemaRef string) []Record {
+func findRecords(t *testing.T, store *trace.SQLiteTraceStore, ownerID, schemaRef string) []trace.Record {
 	t.Helper()
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, ownerID, 999, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, ownerID, 999, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace for %s: %v", ownerID, err)
 	}
-	var found []Record
+	var found []trace.Record
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		if rec.GetEnvelope().SchemaRef == schemaRef {
-			found = append(found, rec.(Record))
+			found = append(found, rec.(trace.Record))
 		}
 	}
 	return found
@@ -134,7 +135,7 @@ func TestFork_RecordsBaselineDigest(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, err := mgr.Create("gate:base-parent", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("gate:base-parent", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -191,8 +192,8 @@ func TestFork_RecordsBaselineDigest(t *testing.T) {
 func forkWorktreeChild(t *testing.T, mgr *ScopeManager, parentID, childOwner, repo, leaf string) (*Scope, string) {
 	t.Helper()
 	wtPath := filepath.Join(t.TempDir(), leaf)
-	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(context.Background(), SandboxSpec{}); err != nil {
+	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create for %s: %v", childOwner, err)
 	}
 	child, err := mgr.ForkIsolated(parentID, childOwner, nil, sb)
@@ -209,7 +210,7 @@ func TestProposeMerge_ClassifiesChildChanges(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:prop-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:prop-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "gate:prop-child", repo, "wt")
 
@@ -265,7 +266,7 @@ func TestCommitMerge_DenyingReviewer(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("gate:deny-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:deny-parent", sandbox.NewLocalGitSandbox(repo))
 
 	cp, err := mgr.CreateCheckpoint(ctx, parent.ID(), nil)
 	if err != nil {
@@ -333,7 +334,7 @@ func TestCommitMerge_ApprovingReviewer(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("gate:ok-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:ok-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, err := mgr.Fork(parent.ID(), "gate:ok-child", nil)
 	if err != nil {
@@ -375,7 +376,7 @@ func TestCommitMerge_IsolatedChildRefused(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:iso-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:iso-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "gate:iso-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "feature.txt"), []byte("x"), 0o644); err != nil {
@@ -430,80 +431,5 @@ func TestDestructivePathReviewer(t *testing.T) {
 	err = review(MergeProposal{Changes: []ProposedChange{{Path: "anything.txt"}}})
 	if err != nil {
 		t.Errorf("empty pattern list denied: %v", err)
-	}
-}
-
-// TestSupervisor_ReviewMerge covers T3.4: rule engines get merge proposals as
-// events, InterventionDiscard gains a live emitter, and wiring the verdict
-// into CommitMerge denies without merging.
-func TestSupervisor_ReviewMerge(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:rev-parent", NewLocalGitSandbox(repo))
-
-	sup := NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
-	sup.AddRule(SupervisionRule{
-		Name: "drafts_only_merge_gate",
-		Match: func(e EffectEvent) bool {
-			return e.SchemaRef == SchemaMergeProposed
-		},
-		Action: func(e EffectEvent) *Intervention {
-			paths, _ := e.Payload["paths"].([]string)
-			for _, p := range paths {
-				if !pathWithin(p, "drafts") {
-					return &Intervention{
-						Type:    InterventionDiscard,
-						ScopeID: "scope:" + e.TraceOwnerID,
-						Payload: "changes must stay under drafts/",
-						Time:    time.Now(),
-					}
-				}
-			}
-			return nil
-		},
-	})
-
-	reviewer := func(p MergeProposal) error {
-		if iv := sup.ReviewMerge(p.ChildScopeID, p); iv != nil && iv.Type == InterventionDiscard {
-			return errors.New(fmt.Sprint(iv.Payload))
-		}
-		return nil
-	}
-
-	// A shared-sandbox child writes outside the prefix, and the supervisor's
-	// rule denies the merge through ReviewMerge — the emitter story in one flow.
-	child, err := mgr.Fork(parent.ID(), "gate:rev-child", nil)
-	if err != nil {
-		t.Fatalf("fork: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "elsewhere.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	err = mgr.CommitMerge(context.Background(), child.ID(), reviewer)
-	var denied *SupervisorDeniedError
-	if !errors.As(err, &denied) {
-		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want SupervisorDeniedError", err, err)
-	}
-	if !strings.Contains(denied.Error(), "drafts/") {
-		t.Errorf("denial text = %q, want the rule's payload as the reason", denied.Error())
-	}
-	if child.State() != ScopeDiscarded {
-		t.Errorf("child state = %s, want discarded", child.State())
-	}
-	if !fileExists(t, repo, "elsewhere.txt") {
-		// The shared child's write is in the parent tree; the caller's
-		// checkpoint restore removes it. Here we only assert the causal side.
-		t.Log("note: shared child's write was already in the parent tree; rollback is the caller's restore")
-	}
-
-	// An in-prefix proposal produces no intervention (approval).
-	good := MergeProposal{
-		ChildScopeID: "scope:gate:rev-child",
-		Changes:      []ProposedChange{{Path: "drafts/ok.txt", Kind: ChangeCreate}},
-	}
-	if iv := sup.ReviewMerge(child.ID(), good); iv != nil {
-		t.Errorf("in-prefix proposal: intervention = %+v, want nil", iv)
 	}
 }

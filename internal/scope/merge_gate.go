@@ -1,9 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"path"
 	"strings"
 )
@@ -227,7 +228,7 @@ func recordMergeProposed(ctx context.Context, child *Scope, proposal *MergePropo
 	for _, c := range proposal.Changes {
 		changes = append(changes, map[string]any{"path": c.Path, "kind": c.Kind})
 	}
-	diffDigest, err := CanonicalDigest(map[string]any{"diff": proposal.Diff})
+	diffDigest, err := trace.CanonicalDigest(map[string]any{"diff": proposal.Diff})
 	if err != nil {
 		diffDigest = ""
 	}
@@ -237,13 +238,13 @@ func recordMergeProposed(ctx context.Context, child *Scope, proposal *MergePropo
 		causedBy = []string{forkPoint}
 	}
 
-	receipt, err := child.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	receipt, err := child.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:merge-proposed:%d", ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  ownerID,
 			CausalParents: causedBy,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaMergeProposed,
 				KindLabel: "merge:proposed",
 				Payload: map[string]any{
@@ -293,13 +294,13 @@ func recordSupervisorDecision(
 		causalParents = []string{causedBy}
 	}
 
-	_, err := parent.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	_, err := parent.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:merge-decision:%d", ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  ownerID,
 			CausalParents: causalParents,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaSupervisorDecision,
 				KindLabel: "supervisor:decision",
 				Payload:   payload,

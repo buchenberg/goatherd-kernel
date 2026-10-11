@@ -1,9 +1,11 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,7 +16,7 @@ import (
 // such, not pretending to be shepherd2.run_output.v1.
 const (
 	// SchemaRunOutputSealed is recorded on the sealing scope's owner path
-	// when an output is sealed. Declaration: the sealing is stated intent
+	// when an output is sealed. trace.Declaration: the sealing is stated intent
 	// that the settlement records then observe.
 	SchemaRunOutputSealed = "shepherd.run_output.sealed.v1"
 	// SchemaRunOutputSettled is recorded on the same owner path when the
@@ -73,9 +75,9 @@ type RetainedOutput struct {
 
 	id        string
 	scopeID   string
-	workspace WorkspaceState
+	workspace trace.WorkspaceState
 	// baseline is the parent's fork-time state the changes are against.
-	baseline WorkspaceState
+	baseline trace.WorkspaceState
 	changes  []ProposedChange
 	diff     string
 	state    OutputState
@@ -98,7 +100,7 @@ func (o *RetainedOutput) ID() string { return o.id }
 func (o *RetainedOutput) ScopeID() string { return o.scopeID }
 
 // Workspace returns the sealed sandbox state.
-func (o *RetainedOutput) Workspace() WorkspaceState {
+func (o *RetainedOutput) Workspace() trace.WorkspaceState {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.workspace
@@ -106,7 +108,7 @@ func (o *RetainedOutput) Workspace() WorkspaceState {
 
 // Baseline returns the parent's fork-time state the sealed changes are
 // against.
-func (o *RetainedOutput) Baseline() WorkspaceState {
+func (o *RetainedOutput) Baseline() trace.WorkspaceState {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.baseline
@@ -189,7 +191,7 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 		return nil, fmt.Errorf("cannot seal scope %s in state %s", scopeID, state)
 	}
 	if sb == nil {
-		return nil, ErrNoSandbox
+		return nil, sandbox.ErrNoSandbox
 	}
 	if baseline.Backend == "" {
 		return nil, fmt.Errorf("scope %s has no fork baseline: it was forked from a parent without a sandbox, so its changes have no base to settle onto", scopeID)
@@ -219,12 +221,12 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 
 	stateDigest, _ := ws.Digest()
 	baselineDigest, _ := baseline.Digest()
-	receipt, err := s.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	receipt, err := s.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:seal:%d", ownerID, seq),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: SchemaRunOutputSealed,
 				KindLabel: "run_output:sealed",
 				Payload: map[string]any{
@@ -237,7 +239,7 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 					"change_count":    len(out.changes),
 					// The full states and the change list ride in the payload so
 					// recovery (plan 05 section 4) rebuilds settle-able outputs:
-					// digests alone cannot restore a WorkspaceState, and the
+					// digests alone cannot restore a trace.WorkspaceState, and the
 					// overlap guard needs the paths.
 					"state": map[string]any{
 						"backend":  ws.Backend,
@@ -299,7 +301,7 @@ func stateFor(action SettlementAction) (OutputState, error) {
 //     error pointing at apply.
 //   - applied: three-way. The parent's changes since the baseline must be
 //     path-disjoint from the output's changes; the sealed delta is then
-//     merged onto the parent's current workspace (DeltaApplier). A path
+//     merged onto the parent's current workspace (sandbox.DeltaApplier). A path
 //     overlap returns ErrApplyConflict and consumes nothing; so does any
 //     merge failure — apply failure never consumes.
 //   - released: mark consumed, keep the sealed state addressable. No
@@ -417,10 +419,10 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 		if overlap := overlappingPaths(out.changes, parentFiles); len(overlap) > 0 {
 			return fmt.Errorf("%w: parent changed %v since the baseline, which the sealed output also changes", ErrApplyConflict, overlap)
 		}
-		da, canDelta := parentSb.(DeltaApplier)
+		da, canDelta := parentSb.(sandbox.DeltaApplier)
 		if !canDelta {
-			return fmt.Errorf("settle %s (apply): parent sandbox backend %s does not implement DeltaApplier: %w",
-				out.id, parentSb.Backend(), ErrUnsupported)
+			return fmt.Errorf("settle %s (apply): parent sandbox backend %s does not implement sandbox.DeltaApplier: %w",
+				out.id, parentSb.Backend(), sandbox.ErrUnsupported)
 		}
 		if err := da.ApplyDelta(ctx, out.workspace); err != nil {
 			return fmt.Errorf("settle %s (apply): %w", out.id, err)
@@ -444,7 +446,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 // Both verbs physically change the parent workspace and causally merge the
 // child, so the child must still be active and the parent must still be an
 // active sandboxed scope. No check here mutates anything.
-func settleParent(scope *Scope, out *RetainedOutput, verb string) (*Scope, Sandbox, error) {
+func settleParent(scope *Scope, out *RetainedOutput, verb string) (*Scope, sandbox.Sandbox, error) {
 	if scope.State() != ScopeActive {
 		return nil, nil, fmt.Errorf("settle %s (%s): scope %s is %s",
 			out.id, verb, scope.ID(), scope.State())
@@ -497,13 +499,13 @@ func recordRunOutputSettled(ctx context.Context, scope *Scope, out *RetainedOutp
 	}
 	stateDigest, _ := out.workspace.Digest()
 
-	_, err := scope.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	_, err := scope.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:settle:%s:%d", ownerID, action, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  ownerID,
 			CausalParents: causedBy,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaRunOutputSettled,
 				KindLabel: "run_output:settled",
 				Payload: map[string]any{

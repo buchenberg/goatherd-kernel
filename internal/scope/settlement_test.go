@@ -1,9 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ func TestSeal_FreezesChanges(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:seal-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:seal-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:seal-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
@@ -101,7 +102,7 @@ func TestSettle_SelectOnUnmovedParent(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:sel-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:sel-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:sel-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
@@ -147,7 +148,7 @@ func TestSettle_SelectRefusesMovedParent(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:move-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:move-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:move-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("x"), 0o644); err != nil {
@@ -181,7 +182,7 @@ func TestSettle_ApplyDisjointSucceeds(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:app-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:app-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:app-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "feature.txt"), []byte("from child"), 0o644); err != nil {
@@ -226,7 +227,7 @@ func TestSettle_ApplyConflictKeepsUnconsumed(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:conf-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:conf-parent", sandbox.NewLocalGitSandbox(repo))
 
 	// The child will change shared.txt.
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:conf-child", repo, "wt")
@@ -274,7 +275,7 @@ func TestSettle_ReleaseAndUnknownAction(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:rel-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:rel-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:rel-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "kept.txt"), []byte("x"), 0o644); err != nil {
@@ -326,7 +327,7 @@ func TestSettle_DiscardDestroysChild(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("set:disc-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("set:disc-parent", sandbox.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:disc-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "loser.txt"), []byte("x"), 0o644); err != nil {

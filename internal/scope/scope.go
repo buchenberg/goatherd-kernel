@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"sync"
 )
 
@@ -11,6 +13,12 @@ const (
 	SchemaScopeForked    = "shepherd.scope.forked.v1"
 	SchemaScopeMerged    = "shepherd.scope.merged.v1"
 	SchemaScopeDiscarded = "shepherd.scope.discarded.v1"
+	// SchemaSupervisorInject is recorded by Scope.Inject — the supervisor
+	// vocabulary the scope itself writes; the supervisor component reads it.
+	SchemaSupervisorInject = "shepherd.supervisor.inject.v1"
+	// SchemaSupervisorHalt is recorded by Scope.Halt and scanned by recovery
+	// as a terminal state.
+	SchemaSupervisorHalt = "shepherd.supervisor.halt.v1"
 )
 
 // ScopeState tracks the lifecycle of a scope.
@@ -55,13 +63,13 @@ const (
 type Scope struct {
 	id        string
 	ownerID   string
-	store     *SQLiteTraceStore
+	store     *trace.SQLiteTraceStore
 	parent    *Scope
 	forkPoint string // record ID at fork time (empty for root scopes)
 	snapshot  any    // execution state at fork time (nil for root scopes)
 	children  []*Scope
 	state     ScopeState
-	sandbox   Sandbox // execution substrate; nil for pure-causal scopes
+	sandbox   sandbox.Sandbox // execution substrate; nil for pure-causal scopes
 	// ownsSandbox reports whether Merge/Discard/Halt should Destroy the
 	// sandbox. Inherited sandboxes are owned by the scope that created them.
 	ownsSandbox bool
@@ -69,14 +77,14 @@ type Scope struct {
 	// what merge review diffs the child against and what settlement's select
 	// verb compares the parent against. Empty for pure-causal forks (no
 	// sandbox) — such children cannot propose merges.
-	baseline WorkspaceState
+	baseline trace.WorkspaceState
 	mu       sync.RWMutex
 }
 
 // NewScope creates a root scope (no parent) for the given trace owner.
 // If the store has a bus attached (via WithBus), lifecycle events will
 // be published automatically.
-func NewScope(store *SQLiteTraceStore, ownerID string) *Scope {
+func NewScope(store *trace.SQLiteTraceStore, ownerID string) *Scope {
 	return &Scope{
 		id:      fmt.Sprintf("scope:%s", ownerID),
 		ownerID: ownerID,
@@ -126,8 +134,8 @@ func (s *Scope) Snapshot() any {
 
 // Sandbox returns the scope's execution substrate, or nil for a pure-causal
 // scope. Workspace and checkpoint operations on a nil sandbox return
-// ErrNoSandbox.
-func (s *Scope) Sandbox() Sandbox {
+// sandbox.ErrNoSandbox.
+func (s *Scope) Sandbox() sandbox.Sandbox {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.sandbox
@@ -138,7 +146,7 @@ func (s *Scope) Sandbox() Sandbox {
 // the fast-forward reference for settlement's select verb. Pure-causal forks
 // (parent without a sandbox) report false; children without a baseline
 // cannot propose merges or seal outputs.
-func (s *Scope) Baseline() (WorkspaceState, bool) {
+func (s *Scope) Baseline() (trace.WorkspaceState, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.baseline, s.baseline.Backend != ""
@@ -147,13 +155,13 @@ func (s *Scope) Baseline() (WorkspaceState, bool) {
 // WithSandbox attaches an execution substrate to the scope and reports whether
 // the scope owns its lifecycle.
 //
-// When owns is true, Merge, Discard, and Halt call Sandbox.Destroy. When false
+// When owns is true, Merge, Discard, and Halt call sandbox.Sandbox.Destroy. When false
 // the sandbox outlives the scope, which is correct for an in-place materializer
 // over the user's repository (Destroy is a no-op there) and for a sandbox
 // inherited from a parent scope.
 //
 // Returns the scope so construction can be chained.
-func (s *Scope) WithSandbox(sb Sandbox, owns bool) *Scope {
+func (s *Scope) WithSandbox(sb sandbox.Sandbox, owns bool) *Scope {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sandbox = sb
@@ -170,9 +178,9 @@ func (s *Scope) Children() []*Scope {
 	return cp
 }
 
-// Capture the fork baseline: the parent's workspace state at fork time.
+// trace.Capture the fork baseline: the parent's workspace state at fork time.
 // It is the diff base for merge review (ProposeMerge) and the fast-forward
-// reference for settlement's select verb. Capture is non-mutating for the
+// reference for settlement's select verb. trace.Capture is non-mutating for the
 // backends the kernel ships (the git backend stages into a scratch index),
 // so forking leaves the parent's workspace exactly as it was. A scope
 // without a sandbox is pure-causal and forks without a baseline; its
@@ -182,17 +190,17 @@ func (s *Scope) Children() []*Scope {
 // A capture failure fails the fork: a child that claims to be reviewable
 // but has no baseline would hand its reviewer a diff against an unknown
 // state.
-func (s *Scope) forkBaseline() (WorkspaceState, error) {
+func (s *Scope) forkBaseline() (trace.WorkspaceState, error) {
 	s.mu.RLock()
 	inheritedSandbox := s.sandbox
 	s.mu.RUnlock()
 
 	if inheritedSandbox == nil {
-		return WorkspaceState{}, nil
+		return trace.WorkspaceState{}, nil
 	}
 	ws, err := inheritedSandbox.Capture(context.Background())
 	if err != nil {
-		return WorkspaceState{}, fmt.Errorf("capture fork baseline for scope %s: %w", s.id, err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture fork baseline for scope %s: %w", s.id, err)
 	}
 	return ws, nil
 }
@@ -222,7 +230,7 @@ func (s *Scope) Fork(childOwnerID string, snapshot any) (*Scope, error) {
 // and still register atomically. isolated records that the child was
 // forked with its own substrate, which is what recovery needs to know
 // whether a re-adopted sandbox belongs to the child alone.
-func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline WorkspaceState, isolated bool, sandboxBackend string) (*Scope, error) {
+func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline trace.WorkspaceState, isolated bool, sandboxBackend string) (*Scope, error) {
 	s.mu.Lock()
 	if s.state != ScopeActive {
 		s.mu.Unlock()
@@ -235,7 +243,7 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline Wor
 	// empty one for a sandboxed parent means the caller skipped the
 	// capture, which the manager never does.
 	if inheritedSandbox == nil {
-		baseline = WorkspaceState{}
+		baseline = trace.WorkspaceState{}
 	}
 	s.mu.Unlock()
 
@@ -255,7 +263,7 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline Wor
 		}
 		// The full baseline state rides in the payload so recovery can
 		// rebuild a child that can still propose merges and seal outputs:
-		// the digest alone cannot restore a WorkspaceState.
+		// the digest alone cannot restore a trace.WorkspaceState.
 		forkPayload["baseline"] = map[string]any{
 			"backend":  baseline.Backend,
 			"revision": baseline.Revision,
@@ -264,12 +272,12 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline Wor
 	}
 
 	// Record the fork event in the parent's trace to get a fork-point record.
-	forkReceipt, err := s.store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	forkReceipt, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:fork:%s:%d", s.ownerID, childOwnerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: s.ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: SchemaScopeForked,
 				KindLabel: "scope:forked",
 				Payload:   forkPayload,
@@ -349,13 +357,13 @@ func (s *Scope) merge(child *Scope) error {
 		causedBy = []string{child.forkPoint}
 	}
 
-	_, err := s.store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:merge:%s:%d", s.ownerID, child.ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  s.ownerID,
 			CausalParents: causedBy,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaScopeMerged,
 				KindLabel: "scope:merged",
 				Payload: map[string]any{
@@ -408,13 +416,13 @@ func (s *Scope) discard(child *Scope) error {
 		causedBy = []string{child.forkPoint}
 	}
 
-	_, err := s.store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:discard:%s:%d", s.ownerID, child.ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID:  s.ownerID,
 			CausalParents: causedBy,
-			FactDrafts: []RecordDraft{{
-				Mode:      Capture,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Capture,
 				SchemaRef: SchemaScopeDiscarded,
 				KindLabel: "scope:discarded",
 				Payload: map[string]any{
@@ -443,12 +451,12 @@ func (s *Scope) Inject(guidance string) error {
 		return fmt.Errorf("cannot inject into scope %s in state %s", s.id, s.state)
 	}
 
-	_, err := s.store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:inject:%d", s.ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: s.ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: SchemaSupervisorInject,
 				KindLabel: "supervisor:inject",
 				Payload: map[string]any{
@@ -485,12 +493,12 @@ func (s *Scope) halt() error {
 		return nil // already halted
 	}
 
-	_, err := s.store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:halt:%d", s.ownerID, nextCheckpointSeq.Add(1)),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: s.ownerID,
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: SchemaSupervisorHalt,
 				KindLabel: "supervisor:halt",
 				Payload:   map[string]any{},

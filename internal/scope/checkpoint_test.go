@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +14,8 @@ import (
 // gitScope returns a root scope backed by an in-place git sandbox over repo.
 // The scope does not own the sandbox, so lifecycle operations never touch the
 // caller's repository.
-func gitScope(store *SQLiteTraceStore, owner, repo string) *Scope {
-	return NewScope(store, owner).WithSandbox(NewLocalGitSandbox(repo), false)
+func gitScope(store *trace.SQLiteTraceStore, owner, repo string) *Scope {
+	return NewScope(store, owner).WithSandbox(sandbox.NewLocalGitSandbox(repo), false)
 }
 
 // stashOf extracts the stash SHA from a checkpoint's backend-neutral workspace
@@ -95,7 +97,7 @@ func TestCheckpoint_CreateRecordsInTrace(t *testing.T) {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:trace-cp", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:trace-cp", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -104,7 +106,7 @@ func TestCheckpoint_CreateRecordsInTrace(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		if rec.GetEnvelope().SchemaRef == SchemaCheckpointCreated &&
-			rec.GetEnvelope().Mode == Declaration {
+			rec.GetEnvelope().Mode == trace.Declaration {
 			found = true
 			break
 		}
@@ -124,7 +126,7 @@ func TestCheckpoint_CreateRecordsBackendNeutralPayload(t *testing.T) {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:trace-payload", 99, ModeDeclarationsOnly)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:trace-payload", 99, trace.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -133,7 +135,7 @@ func TestCheckpoint_CreateRecordsBackendNeutralPayload(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		if rec.GetEnvelope().SchemaRef == SchemaCheckpointCreated {
-			if r, ok := rec.(Record); ok {
+			if r, ok := rec.(trace.Record); ok {
 				payload = r.Body.Payload
 			}
 		}
@@ -275,7 +277,7 @@ func TestCheckpoint_RestoreRecordsInTrace(t *testing.T) {
 		t.Fatalf("RestoreCheckpoint: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:trace-restore", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:trace-restore", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -284,7 +286,7 @@ func TestCheckpoint_RestoreRecordsInTrace(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		if rec.GetEnvelope().SchemaRef == SchemaCheckpointRestored &&
-			rec.GetEnvelope().Mode == Capture {
+			rec.GetEnvelope().Mode == trace.Capture {
 			found = true
 			break
 		}
@@ -483,16 +485,16 @@ func TestCheckpoint_NoSandboxReturnsErrNoSandbox(t *testing.T) {
 	store := newMemStore(t)
 	scope := NewScope(store, "sub:no-sandbox")
 
-	if _, err := scope.CreateCheckpoint(context.Background(), nil); err != ErrNoSandbox {
-		t.Errorf("CreateCheckpoint err = %v, want ErrNoSandbox", err)
+	if _, err := scope.CreateCheckpoint(context.Background(), nil); err != sandbox.ErrNoSandbox {
+		t.Errorf("CreateCheckpoint err = %v, want sandbox.ErrNoSandbox", err)
 	}
-	if _, err := scope.CaptureWorkspace(context.Background()); err != ErrNoSandbox {
-		t.Errorf("CaptureWorkspace err = %v, want ErrNoSandbox", err)
+	if _, err := scope.CaptureWorkspace(context.Background()); err != sandbox.ErrNoSandbox {
+		t.Errorf("CaptureWorkspace err = %v, want sandbox.ErrNoSandbox", err)
 	}
-	if err := scope.ApplyWorkspace(context.Background(), WorkspaceState{Backend: "git"}); err != ErrNoSandbox {
-		t.Errorf("ApplyWorkspace err = %v, want ErrNoSandbox", err)
+	if err := scope.ApplyWorkspace(context.Background(), trace.WorkspaceState{Backend: "git"}); err != sandbox.ErrNoSandbox {
+		t.Errorf("ApplyWorkspace err = %v, want sandbox.ErrNoSandbox", err)
 	}
-	if _, _, err := scope.DiffWorkspace(context.Background(), WorkspaceState{}, 0); err != ErrNoSandbox {
-		t.Errorf("DiffWorkspace err = %v, want ErrNoSandbox", err)
+	if _, _, err := scope.DiffWorkspace(context.Background(), trace.WorkspaceState{}, 0); err != sandbox.ErrNoSandbox {
+		t.Errorf("DiffWorkspace err = %v, want sandbox.ErrNoSandbox", err)
 	}
 }

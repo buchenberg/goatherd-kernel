@@ -8,12 +8,6 @@ import (
 	"time"
 )
 
-// Supervisor schema refs for trace recording.
-const (
-	SchemaSupervisorInject = "shepherd.supervisor.inject.v1"
-	SchemaSupervisorHalt   = "shepherd.supervisor.halt.v1"
-)
-
 // InterventionType identifies the kind of supervisor action.
 type InterventionType string
 

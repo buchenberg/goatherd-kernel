@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"log/slog"
 	"strings"
 )
@@ -19,7 +21,7 @@ import (
 
 // RecoverOptions configures scope recovery.
 type RecoverOptions struct {
-	// Sandbox re-adoption. Recovery calls it for every recovered root scope
+	// sandbox.Sandbox re-adoption. Recovery calls it for every recovered root scope
 	// and every isolated child, with the backend the trace recorded (empty
 	// for roots, which have no record). Return (nil, nil) to recover the
 	// scope without a sandbox — deliberate non-adoption, not an error: the
@@ -28,11 +30,11 @@ type RecoverOptions struct {
 	//
 	// Shared-sandbox children are never resolved: they inherit the parent's
 	// re-adopted sandbox, exactly as they inherited it at fork time.
-	Resolver func(scopeID, backend string) (Sandbox, error)
+	Resolver func(scopeID, backend string) (sandbox.Sandbox, error)
 }
 
 // resolve is the nil-safe form of opts.Resolver.
-func (o RecoverOptions) resolve(scopeID, backend string) (Sandbox, error) {
+func (o RecoverOptions) resolve(scopeID, backend string) (sandbox.Sandbox, error) {
 	if o.Resolver == nil {
 		return nil, nil
 	}
@@ -45,7 +47,7 @@ type forkEdge struct {
 	childOwner  string
 	isolated    bool
 	backend     string
-	baseline    WorkspaceState
+	baseline    trace.WorkspaceState
 	forkPoint   string
 }
 
@@ -78,7 +80,7 @@ type forkEdge struct {
 //
 // Sandboxes are never invented: the resolver decides what is re-adopted,
 // and a recovery without a resolver rebuilds the causal tree only.
-func RecoverScopes(store *SQLiteTraceStore, opts RecoverOptions) (*ScopeManager, error) {
+func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeManager, error) {
 	ctx := context.Background()
 
 	edges, err := scanForkRecords(ctx, store)
@@ -218,7 +220,7 @@ func RecoverScopes(store *SQLiteTraceStore, opts RecoverOptions) (*ScopeManager,
 // ensureScope returns the manager's scope for ownerID, creating and
 // registering a bare active root when it does not exist — the shape a
 // never-forked root recovers as.
-func ensureScope(mgr *ScopeManager, store *SQLiteTraceStore, ownerID string) *Scope {
+func ensureScope(mgr *ScopeManager, store *trace.SQLiteTraceStore, ownerID string) *Scope {
 	scopeID := fmt.Sprintf("scope:%s", ownerID)
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
@@ -240,7 +242,7 @@ func ensureScope(mgr *ScopeManager, store *SQLiteTraceStore, ownerID string) *Sc
 // state come from the payload (baseline entries older than the recovery
 // payload keys decode empty, and those children simply cannot propose
 // merges — the same refusal a pure-causal fork gets).
-func scanForkRecords(ctx context.Context, store *SQLiteTraceStore) ([]forkEdge, error) {
+func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]forkEdge, error) {
 	records, err := store.ScanRecordsBySchema(ctx, SchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan fork records: %w", err)
@@ -271,7 +273,7 @@ func scanForkRecords(ctx context.Context, store *SQLiteTraceStore) ([]forkEdge, 
 // terminal state. A child merged then somehow discarded cannot happen (the
 // state machine rejects it), so a collision is a corrupt trace and fails
 // the recovery loudly.
-func scanTerminalStates(ctx context.Context, store *SQLiteTraceStore) (map[string]ScopeState, error) {
+func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, error) {
 	records, err := store.ScanRecordsBySchema(ctx, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
 	if err != nil {
 		return nil, fmt.Errorf("scan terminal records: %w", err)
@@ -322,7 +324,7 @@ func edgeFor(edges []forkEdge, childOwner string) *forkEdge {
 // blobs. A checkpoint whose scope is unknown to the fork scan introduces a
 // bare root scope: the blob proves the scope existed even though it never
 // left a lifecycle record.
-func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *SQLiteTraceStore) error {
+func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) error {
 	blobs, corrupt, err := store.LoadCheckpointBlobs(ctx)
 	if err != nil {
 		return fmt.Errorf("recover checkpoints: %w", err)
@@ -403,7 +405,7 @@ func markStaleCheckpoints(ctx context.Context, mgr *ScopeManager) error {
 // settled records. Sealed payloads carry the full states and change list,
 // so a recovered output is settle-able; settled records mark the terminal
 // ones.
-func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *SQLiteTraceStore) error {
+func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) error {
 	sealed, err := store.ScanRecordsBySchema(ctx, SchemaRunOutputSealed)
 	if err != nil {
 		return fmt.Errorf("recover outputs: scan sealed records: %w", err)
@@ -481,15 +483,15 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *SQLiteTraceSt
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle
 // payloads ({"backend", "revision", "data"}).
-func workspaceStateFromPayload(raw map[string]any) WorkspaceState {
-	ws := WorkspaceState{}
+func workspaceStateFromPayload(raw map[string]any) trace.WorkspaceState {
+	ws := trace.WorkspaceState{}
 	ws.Backend, _ = raw["backend"].(string)
 	ws.Revision, _ = raw["revision"].(string)
 	if data, ok := raw["data"].(map[string]any); ok {
 		ws.Data = data
 	}
 	if ws.Backend == "" {
-		return WorkspaceState{}
+		return trace.WorkspaceState{}
 	}
 	return ws
 }

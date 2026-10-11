@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +74,7 @@ func TestScope_ForkRecordsInTrace(t *testing.T) {
 	}
 
 	// Read the parent's trace — should have a scope:forked declaration
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:trace-parent", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:trace-parent", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -81,7 +83,7 @@ func TestScope_ForkRecordsInTrace(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		env := rec.GetEnvelope()
-		if env.SchemaRef == SchemaScopeForked && env.Mode == Declaration {
+		if env.SchemaRef == SchemaScopeForked && env.Mode == trace.Declaration {
 			found = true
 			break
 		}
@@ -95,7 +97,7 @@ func TestScope_ForkRecordsInTrace(t *testing.T) {
 	if fp == "" {
 		t.Fatal("child fork point should not be empty")
 	}
-	_, err = store.ReadFact(context.Background(), TrustedReadContext, fp)
+	_, err = store.ReadFact(context.Background(), trace.TrustedReadContext, fp)
 	if err != nil {
 		t.Errorf("fork point record should be readable: %v", err)
 	}
@@ -122,7 +124,7 @@ func TestScope_Merge(t *testing.T) {
 	}
 
 	// Parent trace should have scope:merged capture
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:merge-parent", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:merge-parent", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -131,7 +133,7 @@ func TestScope_Merge(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		env := rec.GetEnvelope()
-		if env.SchemaRef == SchemaScopeMerged && env.Mode == Capture {
+		if env.SchemaRef == SchemaScopeMerged && env.Mode == trace.Capture {
 			found = true
 			// Should cite the fork point as causal parent
 			if len(env.CausedByIDs) == 0 {
@@ -166,7 +168,7 @@ func TestScope_Discard(t *testing.T) {
 	}
 
 	// Parent trace should have scope:discarded capture
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:discard-parent", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:discard-parent", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -175,7 +177,7 @@ func TestScope_Discard(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
 		env := rec.GetEnvelope()
-		if env.SchemaRef == SchemaScopeDiscarded && env.Mode == Capture {
+		if env.SchemaRef == SchemaScopeDiscarded && env.Mode == trace.Capture {
 			found = true
 			break
 		}
@@ -191,12 +193,12 @@ func TestScope_ForkThenDiscard_LeavesParentUnchanged(t *testing.T) {
 	child, _ := parent.Fork("sub:child", nil)
 
 	// Record something in the child's trace
-	_, err := store.Append(context.Background(), TrustedAppendContext, AppendBatch{
+	_, err := store.Append(context.Background(), trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: "child:work:1",
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: "sub:child",
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: "yaah.tool.bash.v1",
 				KindLabel: "bash",
 				Payload:   map[string]any{"cmd": "rm -rf /"},
@@ -211,7 +213,7 @@ func TestScope_ForkThenDiscard_LeavesParentUnchanged(t *testing.T) {
 	parent.Discard(child)
 
 	// Parent trace should NOT have the child's tool call
-	parentSlice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:parent", 99, ModeDeclarationsOnly)
+	parentSlice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:parent", 99, trace.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read parent trace: %v", err)
 	}
@@ -223,7 +225,7 @@ func TestScope_ForkThenDiscard_LeavesParentUnchanged(t *testing.T) {
 	}
 
 	// But the child's records should still be in the store (append-only)
-	childSlice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:child", 99, ModeDeclarationsOnly)
+	childSlice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:child", 99, trace.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read child trace: %v", err)
 	}
@@ -576,7 +578,7 @@ func TestScopeManager_CreateCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-managed", NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-managed", sandbox.NewLocalGitSandbox(repo))
 
 	cp, err := mgr.CreateCheckpoint(context.Background(), scope.ID(), []byte("snapshot"))
 	if err != nil {
@@ -591,7 +593,7 @@ func TestScopeManager_RestoreCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-restore", NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-restore", sandbox.NewLocalGitSandbox(repo))
 
 	writeFile(t, repo, "main.go", "original")
 	mustGit(t, repo, "add", "-A")
@@ -623,7 +625,7 @@ func TestScopeManager_LatestCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-latest", NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-latest", sandbox.NewLocalGitSandbox(repo))
 
 	cp1, err := mgr.CreateCheckpoint(context.Background(), scope.ID(), nil)
 	if err != nil {
@@ -666,7 +668,7 @@ func TestScopeManager_ConcurrentCheckpointsUniqueIDs(t *testing.T) {
 	scopes := make([]*Scope, n)
 	for i := range scopes {
 		repo := newTestRepo(t)
-		scope, err := mgr.Create(fmt.Sprintf("sub:cp-concurrent:%d", i), NewLocalGitSandbox(repo))
+		scope, err := mgr.Create(fmt.Sprintf("sub:cp-concurrent:%d", i), sandbox.NewLocalGitSandbox(repo))
 		if err != nil {
 			t.Fatalf("create scope %d: %v", i, err)
 		}
@@ -709,7 +711,7 @@ func TestScopeManager_CheckpointScopeNotFound(t *testing.T) {
 	}
 }
 
-// --- Sandbox attachment and isolation ---
+// --- sandbox.Sandbox attachment and isolation ---
 
 func TestScope_WithSandbox(t *testing.T) {
 	store := newMemStore(t)
@@ -720,20 +722,20 @@ func TestScope_WithSandbox(t *testing.T) {
 		t.Error("a fresh scope should have no sandbox")
 	}
 
-	sb := NewLocalGitSandbox(repo)
+	sb := sandbox.NewLocalGitSandbox(repo)
 	got := scope.WithSandbox(sb, true)
 	if got != scope {
 		t.Error("WithSandbox should return the scope for chaining")
 	}
 	if scope.Sandbox() != sb {
-		t.Error("Sandbox() should return the attached sandbox")
+		t.Error("sandbox.Sandbox() should return the attached sandbox")
 	}
 }
 
 func TestScope_ForkInheritsSandboxWithoutOwnership(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)
-	parent := NewScope(store, "sub:inherit").WithSandbox(NewLocalGitSandbox(repo), false)
+	parent := NewScope(store, "sub:inherit").WithSandbox(sandbox.NewLocalGitSandbox(repo), false)
 
 	child, err := parent.Fork("sub:inherit-child", nil)
 	if err != nil {
@@ -759,11 +761,11 @@ func TestScopeManager_ForkIsolatedOwnsSandbox(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("sub:iso-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("sub:iso-parent", sandbox.NewLocalGitSandbox(repo))
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(context.Background(), SandboxSpec{}); err != nil {
+	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create: %v", err)
 	}
 
@@ -794,11 +796,11 @@ func TestScopeManager_DestroyScopeSandbox(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("sub:destroy-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("sub:destroy-parent", sandbox.NewLocalGitSandbox(repo))
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(context.Background(), SandboxSpec{}); err != nil {
+	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create: %v", err)
 	}
 	child, err := mgr.ForkIsolated(parent.ID(), "sub:destroy-child", nil, sb)

@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"log/slog"
 )
 
@@ -15,7 +17,7 @@ const (
 )
 
 // CaptureWorkspace records the scope's current workspace state as a reusable
-// WorkspaceState.
+// trace.WorkspaceState.
 //
 // Unlike CreateCheckpoint, this has no lifecycle: it consumes nothing, records
 // no checkpoint, and the returned state stays valid indefinitely. This is what
@@ -23,7 +25,7 @@ const (
 // fork point, run variant B, then apply the winner.
 //
 // Records a "workspace.captured" declaration in the scope's trace (advisory).
-func (s *Scope) CaptureWorkspace(ctx context.Context) (WorkspaceState, error) {
+func (s *Scope) CaptureWorkspace(ctx context.Context) (trace.WorkspaceState, error) {
 	s.mu.RLock()
 	state := s.state
 	sb := s.sandbox
@@ -32,30 +34,30 @@ func (s *Scope) CaptureWorkspace(ctx context.Context) (WorkspaceState, error) {
 	s.mu.RUnlock()
 
 	if state != ScopeActive {
-		return WorkspaceState{}, fmt.Errorf("cannot capture workspace in scope %s state %s", scopeID, state)
+		return trace.WorkspaceState{}, fmt.Errorf("cannot capture workspace in scope %s state %s", scopeID, state)
 	}
 	if sb == nil {
-		return WorkspaceState{}, ErrNoSandbox
+		return trace.WorkspaceState{}, sandbox.ErrNoSandbox
 	}
 
 	ws, err := sb.Capture(ctx)
 	if err != nil {
-		return WorkspaceState{}, fmt.Errorf("capture workspace: %w", err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture workspace: %w", err)
 	}
 
-	s.recordWorkspaceEvent(ctx, ownerID, Declaration, SchemaWorkspaceCaptured, "workspace:captured", ws)
+	s.recordWorkspaceEvent(ctx, ownerID, trace.Declaration, SchemaWorkspaceCaptured, "workspace:captured", ws)
 	return ws, nil
 }
 
 // ApplyWorkspace resets the scope's workspace to a previously captured state.
 //
-// The state is not consumed — the same WorkspaceState can be applied repeatedly
+// The state is not consumed — the same trace.WorkspaceState can be applied repeatedly
 // by backends whose workspace state is reusable (the git backend). A backend
 // that provisions fresh resources on Apply may make it single-use; see
-// Sandbox.Apply.
+// sandbox.Sandbox.Apply.
 //
 // Records a "workspace.applied" capture in the scope's trace (advisory).
-func (s *Scope) ApplyWorkspace(ctx context.Context, ws WorkspaceState) error {
+func (s *Scope) ApplyWorkspace(ctx context.Context, ws trace.WorkspaceState) error {
 	s.mu.RLock()
 	state := s.state
 	sb := s.sandbox
@@ -67,14 +69,14 @@ func (s *Scope) ApplyWorkspace(ctx context.Context, ws WorkspaceState) error {
 		return fmt.Errorf("cannot apply workspace in scope %s state %s", scopeID, state)
 	}
 	if sb == nil {
-		return ErrNoSandbox
+		return sandbox.ErrNoSandbox
 	}
 
 	if err := sb.Apply(ctx, ws); err != nil {
 		return fmt.Errorf("apply workspace: %w", err)
 	}
 
-	s.recordWorkspaceEvent(ctx, ownerID, Capture, SchemaWorkspaceApplied, "workspace:applied", ws)
+	s.recordWorkspaceEvent(ctx, ownerID, trace.Capture, SchemaWorkspaceApplied, "workspace:applied", ws)
 	return nil
 }
 
@@ -82,7 +84,7 @@ func (s *Scope) ApplyWorkspace(ctx context.Context, ws WorkspaceState) error {
 // the scope's current workspace. maxLines <= 0 means unbounded.
 //
 // This is a query: it records no trace event and consumes nothing.
-func (s *Scope) DiffWorkspace(ctx context.Context, ws WorkspaceState, maxLines int) (string, []string, error) {
+func (s *Scope) DiffWorkspace(ctx context.Context, ws trace.WorkspaceState, maxLines int) (string, []string, error) {
 	s.mu.RLock()
 	state := s.state
 	sb := s.sandbox
@@ -93,7 +95,7 @@ func (s *Scope) DiffWorkspace(ctx context.Context, ws WorkspaceState, maxLines i
 		return "", nil, fmt.Errorf("cannot diff workspace in scope %s state %s", scopeID, state)
 	}
 	if sb == nil {
-		return "", nil, ErrNoSandbox
+		return "", nil, sandbox.ErrNoSandbox
 	}
 
 	return sb.Diff(ctx, ws, maxLines)
@@ -105,18 +107,18 @@ func (s *Scope) DiffWorkspace(ctx context.Context, ws WorkspaceState, maxLines i
 func (s *Scope) recordWorkspaceEvent(
 	ctx context.Context,
 	ownerID string,
-	mode RecordMode,
+	mode trace.RecordMode,
 	schemaRef, kindLabel string,
-	ws WorkspaceState,
+	ws trace.WorkspaceState,
 ) {
 	seq := nextCheckpointSeq.Add(1)
 	digest, _ := ws.Digest()
 
-	_, err := s.store.Append(ctx, TrustedAppendContext, AppendBatch{
+	_, err := s.store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
 		AppendIntentID: fmt.Sprintf("%s:workspace:%s:%d", ownerID, kindLabel, seq),
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: ownerID,
-			FactDrafts: []RecordDraft{{
+			FactDrafts: []trace.RecordDraft{{
 				Mode:      mode,
 				SchemaRef: schemaRef,
 				KindLabel: kindLabel,

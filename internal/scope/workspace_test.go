@@ -1,7 +1,8 @@
-package shepherd
+package scope
 
 import (
 	"context"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func fileExists(t *testing.T, dir, name string) bool {
 // mustHead returns the current HEAD SHA, failing the test on error.
 
 // stagedFiles returns the staged file list, used to pin the non-mutating
-// contract of Capture and Diff.
+// contract of trace.Capture and Diff.
 func TestWorkspace_CaptureCleanRepo(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)
@@ -158,7 +159,7 @@ func TestWorkspace_ApplyRejectsForeignBackend(t *testing.T) {
 	repo := newTestRepo(t)
 	scope := gitScope(store, "sub:tree-nil", repo)
 
-	err := scope.ApplyWorkspace(context.Background(), WorkspaceState{Backend: "containerd"})
+	err := scope.ApplyWorkspace(context.Background(), trace.WorkspaceState{Backend: "containerd"})
 	if err == nil {
 		t.Error("ApplyWorkspace with a foreign backend should error")
 	}
@@ -172,7 +173,7 @@ func TestWorkspace_CaptureRecordsInTrace(t *testing.T) {
 	if _, err := scope.CaptureWorkspace(context.Background()); err != nil {
 		t.Fatalf("CaptureWorkspace: %v", err)
 	}
-	if err := scope.ApplyWorkspace(context.Background(), WorkspaceState{
+	if err := scope.ApplyWorkspace(context.Background(), trace.WorkspaceState{
 		Backend:  "git",
 		Revision: mustHead(t, repo),
 		Data:     map[string]any{"head_sha": mustHead(t, repo), "stash_sha": ""},
@@ -180,7 +181,7 @@ func TestWorkspace_CaptureRecordsInTrace(t *testing.T) {
 		t.Fatalf("ApplyWorkspace: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:ws-trace", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:ws-trace", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -234,7 +235,7 @@ func TestWorkspace_DiffUncommittedAndUntracked(t *testing.T) {
 	writeFile(t, repo, "README.md", "# Changed")
 	writeFile(t, repo, "brand-new.txt", "untracked file")
 
-	ws := WorkspaceState{Backend: "git", Revision: base}
+	ws := trace.WorkspaceState{Backend: "git", Revision: base}
 	diff, files, err := scope.DiffWorkspace(context.Background(), ws, 0)
 	if err != nil {
 		t.Fatalf("DiffWorkspace: %v", err)
@@ -259,7 +260,7 @@ func TestWorkspace_DiffIsNonMutating(t *testing.T) {
 	writeFile(t, repo, "README.md", "# Changed")
 	writeFile(t, repo, "brand-new.txt", "untracked file")
 
-	if _, _, err := scope.DiffWorkspace(context.Background(), WorkspaceState{Backend: "git", Revision: base}, 0); err != nil {
+	if _, _, err := scope.DiffWorkspace(context.Background(), trace.WorkspaceState{Backend: "git", Revision: base}, 0); err != nil {
 		t.Fatalf("DiffWorkspace: %v", err)
 	}
 	// Diff must leave the caller's index untouched.
@@ -280,7 +281,7 @@ func TestWorkspace_DiffMaxLinesTruncates(t *testing.T) {
 	}
 	writeFile(t, repo, "big.txt", sb.String())
 
-	diff, files, err := scope.DiffWorkspace(context.Background(), WorkspaceState{Backend: "git", Revision: base}, 10)
+	diff, files, err := scope.DiffWorkspace(context.Background(), trace.WorkspaceState{Backend: "git", Revision: base}, 10)
 	if err != nil {
 		t.Fatalf("DiffWorkspace: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestWorkspace_DiffCleanTree(t *testing.T) {
 	scope := gitScope(store, "sub:diff-clean", repo)
 	base := mustHead(t, repo)
 
-	diff, files, err := scope.DiffWorkspace(context.Background(), WorkspaceState{Backend: "git", Revision: base}, 0)
+	diff, files, err := scope.DiffWorkspace(context.Background(), trace.WorkspaceState{Backend: "git", Revision: base}, 0)
 	if err != nil {
 		t.Fatalf("DiffWorkspace: %v", err)
 	}

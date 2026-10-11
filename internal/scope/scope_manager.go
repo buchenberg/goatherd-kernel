@@ -1,8 +1,10 @@
-package shepherd
+package scope
 
 import (
 	"context"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"log/slog"
 	"sort"
 	"sync"
@@ -14,7 +16,7 @@ import (
 //
 // The manager is safe for concurrent use.
 type ScopeManager struct {
-	store       *SQLiteTraceStore
+	store       *trace.SQLiteTraceStore
 	scopes      map[string]*Scope
 	checkpoints map[string]*Checkpoint
 	outputs     map[string]*RetainedOutput
@@ -24,7 +26,7 @@ type ScopeManager struct {
 // NewScopeManager creates a scope manager backed by the given store.
 // If the store has a bus attached (via WithBus), scope lifecycle events
 // will be published automatically.
-func NewScopeManager(store *SQLiteTraceStore) *ScopeManager {
+func NewScopeManager(store *trace.SQLiteTraceStore) *ScopeManager {
 	return &ScopeManager{
 		store:       store,
 		scopes:      make(map[string]*Scope),
@@ -35,10 +37,10 @@ func NewScopeManager(store *SQLiteTraceStore) *ScopeManager {
 
 // Create registers a new root scope for the given trace owner and attaches sb
 // as its execution substrate. Pass a nil sandbox for a pure-causal scope, whose
-// workspace and checkpoint operations will return ErrNoSandbox.
+// workspace and checkpoint operations will return sandbox.ErrNoSandbox.
 //
 // Returns an error if a scope with this ID already exists.
-func (m *ScopeManager) Create(ownerID string, sb Sandbox) (*Scope, error) {
+func (m *ScopeManager) Create(ownerID string, sb sandbox.Sandbox) (*Scope, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -86,14 +88,14 @@ func (m *ScopeManager) Fork(parentID, childOwnerID string, snapshot any) (*Scope
 //
 // Returns an error if the parent doesn't exist or a scope with the child owner
 // ID already exists.
-func (m *ScopeManager) ForkIsolated(parentID, childOwnerID string, snapshot any, sb Sandbox) (*Scope, error) {
+func (m *ScopeManager) ForkIsolated(parentID, childOwnerID string, snapshot any, sb sandbox.Sandbox) (*Scope, error) {
 	return m.forkScope(parentID, childOwnerID, snapshot, true, sb)
 }
 
 // forkScope is the shared fork path: resolve the parent, capture the fork
 // baseline outside the registry lock, then register atomically. isolated
 // forks record their own substrate (sb may be nil for shared forks).
-func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, isolated bool, sb Sandbox) (*Scope, error) {
+func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, isolated bool, sb sandbox.Sandbox) (*Scope, error) {
 	m.mu.RLock()
 	parent, ok := m.scopes[parentID]
 	m.mu.RUnlock()
