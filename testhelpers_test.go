@@ -6,33 +6,34 @@ package shepherd
 
 import (
 	"context"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"testing"
 
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
 	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
 )
 
-func newMemStore(t *testing.T) *SQLiteTraceStore {
+func newMemStore(t *testing.T) *trace.SQLiteTraceStore {
 	t.Helper()
-	store, err := NewSQLiteTraceStore(":memory:")
+	store, err := trace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
-		t.Fatalf("NewSQLiteTraceStore: %v", err)
+		t.Fatalf("trace.NewSQLiteTraceStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 	return store
 }
 
-var trustedAppend = AppendContext{
+var trustedAppend = trace.AppendContext{
 	ActorRef:             "runtime:conformance",
 	PresentedWitnessRefs: []string{"trusted:internal"},
 	SchemaVersionSet:     "shepherd2-slice-a",
 	TrustMode:            "internal",
 }
 
-var reader = ReadContext{ActorRef: "reader", VisibilityProfile: VisibilityPayload}
+var reader = trace.ReadContext{ActorRef: "reader", VisibilityProfile: trace.VisibilityPayload}
 
-func draft(kind string, mode RecordMode, payload map[string]any, causedBy ...string) RecordDraft {
-	return RecordDraft{
+func draft(kind string, mode trace.RecordMode, payload map[string]any, causedBy ...string) trace.RecordDraft {
+	return trace.RecordDraft{
 		KindLabel:       kind,
 		Mode:            mode,
 		SchemaRef:       "shepherd2.conformance." + kind + ".v1",

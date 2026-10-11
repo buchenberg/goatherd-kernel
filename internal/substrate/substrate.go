@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"reflect"
 )
 

@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	substrate "github.com/buchenberg/shepherd-kernel-go/internal/substrate"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"path/filepath"
 	"reflect"
 	"strconv"

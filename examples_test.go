@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,9 +121,9 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 
 		// The "model" first tries something destructive; the supervisor's
 		// pre-execution guard denies it, and the model complies.
-		badCall := EffectEvent{
+		badCall := trace.EffectEvent{
 			TraceOwnerID: fmt.Sprintf("retry:%d", attempt),
-			Mode:         Declaration,
+			Mode:         trace.Declaration,
 			SchemaRef:    "yaah.tool.bash.v1",
 			KindLabel:    "bash",
 			Payload:      map[string]any{"cmd": "rm -rf ."},

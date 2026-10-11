@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"fmt"
 	"log/slog"

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,10 +36,10 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	sup := NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
 	sup.AddRule(SupervisionRule{
 		Name: "drafts_only_merge_gate",
-		Match: func(e EffectEvent) bool {
+		Match: func(e trace.EffectEvent) bool {
 			return e.SchemaRef == SchemaMergeProposed
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			paths, _ := e.Payload["paths"].([]string)
 			for _, p := range paths {
 				if !withinDrafts(p) {

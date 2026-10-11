@@ -22,7 +22,7 @@ import (
 	"encoding/hex"
 
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"math"
 	"strings"
 )

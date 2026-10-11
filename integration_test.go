@@ -2,6 +2,7 @@ package shepherd
 
 import (
 	"context"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 
 	// 1. Infrastructure
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 	store.WithBus(bus)
 	mgr := NewScopeManager(store)
@@ -78,7 +79,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	}
 
 	// 9. Verify trace records both checkpoint.create and checkpoint.restore
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:worker", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:worker", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -88,11 +89,11 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 		env := slice.FactsByID[id].GetEnvelope()
 		switch env.SchemaRef {
 		case SchemaCheckpointCreated:
-			if env.Mode == Declaration {
+			if env.Mode == trace.Declaration {
 				foundCreate = true
 			}
 		case SchemaCheckpointRestored:
-			if env.Mode == Capture {
+			if env.Mode == trace.Capture {
 				foundRestore = true
 			}
 		}
@@ -116,8 +117,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 	supervisor.AddRule(DestructiveToolGuard())
 
 	// Simulate the agent loop's pre-tool check for a destructive bash command
-	event := EffectEvent{
-		Mode:         Declaration,
+	event := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "bash",
 		SchemaRef:    "yaah.tool.bash.v1",
@@ -137,8 +138,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 
 	// Verify that even a benign bash command is denied under default-deny —
 	// shell commands cannot be safely allowlisted by text matching.
-	safeEvent := EffectEvent{
-		Mode:         Declaration,
+	safeEvent := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "bash",
 		SchemaRef:    "yaah.tool.bash.v1",
@@ -150,8 +151,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 	}
 
 	// Verify that a non-bash, non-write, non-delete tool is approved.
-	readEvent := EffectEvent{
-		Mode:         Declaration,
+	readEvent := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "read_file",
 		SchemaRef:    "yaah.tool.read.v1",
@@ -304,7 +305,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 		t.Fatalf("create parent: %v", err)
 	}
 
-	// Capture the fork point once. Both variants must start from it.
+	// trace.Capture the fork point once. Both variants must start from it.
 	forkState, err := parent.CaptureWorkspace(ctx)
 	if err != nil {
 		t.Fatalf("capture fork state: %v", err)
@@ -314,7 +315,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	type variant struct {
 		child    *Scope
 		worktree string
-		state    WorkspaceState
+		state    trace.WorkspaceState
 		file     string
 		content  string
 	}

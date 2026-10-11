@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"io/fs"
 	"log/slog"
 	"os"

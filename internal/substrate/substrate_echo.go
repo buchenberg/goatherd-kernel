@@ -8,7 +8,7 @@ package substrate
 import (
 	"context"
 
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // EchoSubstrate echoes declaration payloads into capture drafts.

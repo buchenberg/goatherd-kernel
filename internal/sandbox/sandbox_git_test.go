@@ -3,7 +3,7 @@ package sandbox
 import (
 	"context"
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"

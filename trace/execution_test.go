@@ -34,7 +34,7 @@ type (
 )
 
 func loadExecutionVectors(t *testing.T) executionVectorDoc {
-	return testvectors.LoadExecutionVectors(t, "../../testdata/execution_vectors_v0.json")
+	return testvectors.LoadExecutionVectors(t, "../testdata/execution_vectors_v0.json")
 }
 
 func TestExecutionIDForMatchesPython(t *testing.T) {

@@ -37,7 +37,7 @@ import (
 	"errors"
 	"fmt"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"io/fs"
 	"time"
 )

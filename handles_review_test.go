@@ -11,7 +11,7 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
-	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"sync/atomic"
 	"testing"
 	"time"

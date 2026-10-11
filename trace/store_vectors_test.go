@@ -100,7 +100,7 @@ type expectedReceipt struct {
 // canonicalise differently.
 func loadStoreVectors(t *testing.T) storeVectorDoc {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/store_vectors_v0.json")
+	data, err := os.ReadFile("../testdata/store_vectors_v0.json")
 	if err != nil {
 		t.Fatalf("read store vectors: %v", err)
 	}

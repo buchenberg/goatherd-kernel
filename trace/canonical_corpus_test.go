@@ -61,7 +61,7 @@ var corpusSizes = map[string]int{
 
 func loadCorpus(t *testing.T) canonicalCorpusFile {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/canonical_corpus_v0.json")
+	data, err := os.ReadFile("../testdata/canonical_corpus_v0.json")
 	if err != nil {
 		t.Fatalf("read corpus: %v", err)
 	}
