@@ -4,6 +4,19 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+### Added
+- **The kernel law map is complete**: law 21's projection half and law 23
+  are pinned as named tests in `trace/laws_test.go`
+  (`TestLawCutSliceProjectionLaws`,
+  `TestProjectionFailsOnIncompatibleModeFilter`). The coverage map had
+  listed both as plan-02 dependencies, but the schema library and its
+  projection gate (`EnsureProjectionCompatible`, wired into the execution
+  and relations folds) had already landed with v0.6.0 — the map lagged the
+  tree. `docs/law-coverage.md` now shows all 25 laws green with no
+  accepted gaps, and the §13 checklist item is ticked.
+
 ## [v0.13.0] - 2026-10-11
 
 The pre-freeze packaging release: both §13 packaging decisions land as a

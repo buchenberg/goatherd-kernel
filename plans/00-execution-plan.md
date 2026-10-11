@@ -581,13 +581,15 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
 
 ## 13. v1.0 readiness checklist (gate after M5)
 
-- [ ] All plans 01–05 acceptance criteria checked; law-coverage map
-      complete. *(Mostly done: the parity plan closed at v0.9.0 — see the
-      CHANGELOG's v0.9.0 section and §0's reconciliation — and
-      `docs/law-coverage.md` maps all 25 laws. Not complete: law 21's
-      projection half and law 23 remain open plan-02 dependencies
-      (`docs/law-coverage.md`), re-evaluated when the projection-
-      compatibility API lands.)*
+- [x] All plans 01–05 acceptance criteria checked; law-coverage map
+      complete. *(The parity plan closed at v0.9.0 — see the CHANGELOG's
+      v0.9.0 section and §0's reconciliation — and `docs/law-coverage.md`
+      maps all 25 laws with no accepted gaps. The last two rows — law 21's
+      projection half and law 23 — turned out to be stale: the schema
+      library and its projection gate had landed with v0.6.0 (wired into
+      `ProjectExecution` and the relations fold, error path already
+      pinned); the change that noticed this ports the two laws as named
+      tests in `laws_test.go` and flips the map to complete.)*
 - [x] Golden/store/schema vectors green in CI against current upstream tag;
       upstream shepherd2 version recorded in go-adjacent
       `testdata/UPSTREAM.md`. *(Evidence: the `golden drift (vs pinned
