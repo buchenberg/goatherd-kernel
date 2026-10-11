@@ -298,6 +298,36 @@ store separate from the trace, and the echo substrate is the test fixture.
 
 ## Architecture
 
+### Package layout
+
+The module is organized by component. Everything a consumer imports lives in
+the root `shepherd` package; the components behind it live under `internal/`,
+which keeps them unimportable outside the module. Within the module the
+dependency graph is acyclic by construction, with `trace` as the leaf:
+
+```
+trace  <-  sandbox  <-  substrate  <-  materialize
+  ^           ^
+  |           |
+handles     scope  <-  supervision
+```
+
+| Package | Contents |
+|---|---|
+| `shepherd` (root) | the alias files that re-export the components — the public API is the union of the component rows below, not the test-support or nested-module rows |
+| `internal/trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
+| `internal/sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
+| `internal/substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
+| `internal/materialize` | the materialize orchestrator (owns the append; substrates never do) |
+| `internal/handles` | the runtime handles — `StartTask`/`StartTaskSync`, `Run`, `ChildHandle`, `TaskControl`, the task `Registry` |
+| `internal/scope` | the scope-tree runtime — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate (proposal, reviewers, `CommitMerge`), settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
+| `internal/supervision` | the `Supervisor` rules engine — rules, interventions, `CheckCall`, the built-in guards, `ReviewMerge` |
+| `internal/gittest`, `internal/testvectors` | test support shared across packages |
+| `sandbox/containerd` | the containerd backend, a nested module (unchanged) |
+
+The re-exports are type aliases and value aliases, so existing imports keep
+compiling unchanged.
+
 ```
 ┌──────────────────────────────────────────────────┐
 │  Orchestrator                                    │
@@ -320,6 +350,17 @@ store separate from the trace, and the echo substrate is the test fixture.
 │  ┌───────────────────────────────────▼────────┐  │
 │  │ SQLiteTraceStore                           │  │
 │  │  Content-addressed, append-only            │  │
+│  └────────────────────────────────────────────┘  │
+│                                                  │
+│  ┌────────────────────────────────────────────┐  │
+│  │ Materialize                                │  │
+│  │  Orchestrates append across substrate &    │  │
+│  │  store; substrates never append directly   │  │
+│  └────────────────────────────────────────────┘  │
+│                                                  │
+│  ┌────────────────────────────────────────────┐  │
+│  │ Substrate (interface)                      │  │
+│  │  Echo · KV · Workspace                     │  │
 │  └────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────┘
 ```
