@@ -6,6 +6,13 @@ contain breaking changes, which are called out below.
 
 ## [Unreleased]
 
+### Added
+- **`sandbox/containerd` carries its own `LICENSE`** (MIT, same as the
+  core): the module publishes separately, and a proxy consumer sees only
+  the module directory, so the root license alone left the adapter
+  unlicensed from its consumers' point of view. Ships with the next nested
+  release.
+
 ### Changed (breaking)
 - **The task runtime and the supervision rules engine moved out of the root
   package** into their own packages: `task`
