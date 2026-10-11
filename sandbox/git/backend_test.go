@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -982,17 +981,14 @@ func TestGitSandbox_AnnotateDeltaBasePinsTrees(t *testing.T) {
 	}
 }
 
-// TestGitSandbox_PinTreeIdempotentWhenRefUnwritable pins the concurrent-seal
+// TestGitSandbox_PinTreeIdempotentWhenRefLocked pins the concurrent-seal
 // fallback deterministically: when the update-ref cannot proceed — here a
-// read-only ref namespace, the same failure surface a sibling seal holding
-// the ref lock produces — an existing ref that already holds the right tree
-// is success, not a spurious Seal failure. The race itself is
-// scheduler-dependent, so the test forces the failure branch; chmod cannot
-// make the ref unwritable on Windows, so it is skipped there.
-func TestGitSandbox_PinTreeIdempotentWhenRefUnwritable(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod cannot make the ref unwritable on Windows")
-	}
+// directory at the ref's .lock path, the exact state a sibling seal holding
+// the ref lock leaves behind — an existing ref that already holds the right
+// tree is success, not a spurious Seal failure. The injection is
+// privilege-independent (an occupied lock path blocks git even for root,
+// unlike chmod) and works on every CI OS.
+func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestRepo(t)
 	gittest.WriteFile(t, repo, "base.txt", "committed")
@@ -1008,8 +1004,6 @@ func TestGitSandbox_PinTreeIdempotentWhenRefUnwritable(t *testing.T) {
 		t.Fatal("capture recorded no tree_sha")
 	}
 
-	// Pin once, then make the ref namespace unwritable so the next
-	// update-ref fails.
 	if err := sb.pinTree(ctx, tree); err != nil {
 		t.Fatalf("pinTree (first): %v", err)
 	}
@@ -1017,18 +1011,19 @@ func TestGitSandbox_PinTreeIdempotentWhenRefUnwritable(t *testing.T) {
 	if _, err := os.Stat(refPath); err != nil {
 		t.Fatalf("the pin's ref file %s: %v", refPath, err)
 	}
-	dir := filepath.Dir(refPath)
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatalf("chmod ref dir: %v", err)
-	}
-	defer func() { _ = os.Chmod(dir, 0o755) }()
-	if err := os.Chmod(refPath, 0o444); err != nil {
-		t.Fatalf("chmod ref file: %v", err)
-	}
 
-	// Sanity: an update-ref really cannot proceed now.
+	// Occupy the ref's lock path the way a sibling seal holding the lock
+	// would: the update fails, the ref itself stays readable.
+	lockDir := refPath + ".lock"
+	if err := os.Mkdir(lockDir, 0o755); err != nil {
+		t.Fatalf("occupy the lock path: %v", err)
+	}
+	defer func() { _ = os.Remove(lockDir) }()
+
+	// Sanity: an update-ref really cannot proceed now — on any OS and
+	// for any privilege, because the lock path is a directory.
 	if _, err := gittest.Run(t, repo, "update-ref", "refs/shepherd/states/"+tree, tree); err == nil {
-		t.Skip("update-ref succeeded despite the unwritable ref; the environment runs privileged and cannot exercise the fallback")
+		t.Skip("update-ref succeeded despite the occupied lock path; this git tolerates a directory at the lock path and the fallback cannot be exercised")
 	}
 
 	if err := sb.pinTree(ctx, tree); err != nil {
