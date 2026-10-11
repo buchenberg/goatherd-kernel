@@ -67,12 +67,13 @@ type forkEdge struct {
 //   - Checkpoints recover from the checkpoint_snapshots table. A recovered
 //     checkpoint whose recorded workspace revision no longer matches a
 //     fresh capture of the re-adopted sandbox is marked CheckpointInvalid —
-//     never silently restorable. Revision, not digest: git mints a fresh
-//     stash commit per capture, so digest equality would invalidate every
-//     dirty-tree checkpoint; revision (the HEAD) is the stable timeline
-//     position. Sandboxes that cannot be captured at recovery (no sandbox
-//     resolved, capture error) leave their checkpoints Valid — restore
-//     re-validates against the live workspace anyway.
+//     never silently restorable. Revision, not digest: the revision is the
+//     timeline position, and that is what staleness means — a checkpoint
+//     recorded at a HEAD the workspace has left is stale even if its
+//     content would still digest equal. Sandboxes that cannot be captured
+//     at recovery (no sandbox resolved, capture error) leave their
+//     checkpoints Valid — restore re-validates against the live workspace
+//     anyway.
 //   - Retained outputs recover settle-able: the sealed payload carries the
 //     full sealed and baseline states and the change list. A recovered
 //     output's Diff is empty (the diff body was never recorded) and its
@@ -360,11 +361,12 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 // markStaleCheckpoints invalidates recovered checkpoints whose recorded
 // revision no longer matches a fresh capture of the re-adopted sandbox —
 // the never-silently-restorable rule (plan 05 section 4). Revision, not
-// digest: git mints a fresh stash commit per capture, so digest equality
-// would invalidate every dirty-tree checkpoint; the revision is the
-// stable timeline position. A scope without a re-adopted sandbox leaves
-// its checkpoints Valid — restore re-validates against the live
-// workspace anyway.
+// digest: the revision is the timeline position, and that is the
+// staleness question — content equality (digest-stable since plan 06's
+// content identity) is a different question, and a checkpoint whose
+// content still matches but whose timeline advanced is stale anyway. A
+// scope without a re-adopted sandbox leaves its checkpoints Valid —
+// restore re-validates against the live workspace anyway.
 func markStaleCheckpoints(ctx context.Context, mgr *ScopeManager) error {
 	mgr.mu.RLock()
 	type pair struct {

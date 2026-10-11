@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
 	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
@@ -490,5 +491,189 @@ func TestSettle_SameTreeMovedHeadRoutesToApply(t *testing.T) {
 	}
 	if out.State() != OutputApplied {
 		t.Errorf("output state = %s, want applied", out.State())
+	}
+}
+
+// --- Plan 06 Phase B: settlement over dirty baselines ---
+
+// dirtyBaselineFork forks a worktree child from a parent whose workspace
+// carries uncommitted content — plan 06's scenario. The baseline dirt
+// (README.md modified, uncommitted) is written back into the child
+// worktree the way a provisioning layer would, because a git worktree
+// checks out HEAD, not the dirt; without that, the child's delta would
+// read the baseline's own content as its own deletion. The parent keeps
+// its uncommitted content when the helper returns.
+func dirtyBaselineFork(t *testing.T, mgr *ScopeManager, parentID, childOwner, repo, leaf string) (*Scope, string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("dirty the baseline: %v", err)
+	}
+	child, wtPath := forkWorktreeChild(t, mgr, parentID, childOwner, repo, leaf)
+	if err := os.WriteFile(filepath.Join(wtPath, "README.md"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("carry the baseline dirt into the child: %v", err)
+	}
+	return child, wtPath
+}
+
+// TestSeal_OverDirtyBaselineFreezesOnlyBranchChanges is the U1b law at the
+// settlement layer: a seal over a dirty baseline freezes only the branch's
+// own changes. The baseline's uncommitted content appears on neither side,
+// so it is neither in the frozen change list nor in the overlap guard's
+// view of parent drift.
+func TestSeal_OverDirtyBaselineFreezesOnlyBranchChanges(t *testing.T) {
+	mgr := NewScopeManager(newMemStore(t))
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:dseal-parent", git.NewLocalGitSandbox(repo))
+
+	child, wtPath := dirtyBaselineFork(t, mgr, parent.ID(), "set:dseal-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal over a dirty baseline: %v", err)
+	}
+	changes := out.Changes()
+	if len(changes) != 1 || changes[0].Path != "result.txt" || changes[0].Kind != ChangeCreate {
+		t.Errorf("frozen changes = %+v, want only result.txt created; the baseline's own dirt must not be frozen in", changes)
+	}
+	for _, c := range changes {
+		if c.Path == "README.md" {
+			t.Errorf("the baseline's uncommitted content was frozen into the sealed change list: %+v", changes)
+		}
+	}
+}
+
+// TestSettle_SelectOverUnmovedDirtyParentIsDeterministic is the U1a law at
+// the settlement layer: select over an unmoved dirty parent succeeds,
+// deterministically. The pre-plan-06 state could pass only when both
+// captures minted their stash commits within the same second; the
+// repetition with a >1s gap between fork and settle kills that luck class
+// outright rather than leaving the pass to timing.
+func TestSettle_SelectOverUnmovedDirtyParentIsDeterministic(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		t.Run(fmt.Sprintf("iteration-%d", i), func(t *testing.T) {
+			mgr := NewScopeManager(newMemStore(t))
+			repo := newTestRepo(t)
+			ctx := context.Background()
+			parent, _ := mgr.Create(fmt.Sprintf("set:dsel-parent-%d", i), git.NewLocalGitSandbox(repo))
+
+			child, wtPath := dirtyBaselineFork(t, mgr, parent.ID(), fmt.Sprintf("set:dsel-child-%d", i), repo, "wt")
+			if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
+				t.Fatalf("write result: %v", err)
+			}
+			out, err := mgr.Seal(ctx, child.ID())
+			if err != nil {
+				t.Fatalf("Seal: %v", err)
+			}
+
+			// The same-second luck class: the baseline capture happened at
+			// fork time; this gap pushes the parent's settle-time capture
+			// into a different timestamp window.
+			time.Sleep(1100 * time.Millisecond)
+
+			if err := mgr.Settle(ctx, out.ID(), SettleSelect); err != nil {
+				t.Fatalf("SettleSelect over an unmoved dirty parent: %v", err)
+			}
+			if got := readRepoFile(t, repo, "result.txt"); got != "winner" {
+				t.Errorf("result.txt = %q, want the child's content landed", got)
+			}
+			// The baseline's uncommitted content survives the select.
+			if got := readRepoFile(t, repo, "README.md"); got != "uncommitted" {
+				t.Errorf("README.md = %q, want the baseline's uncommitted content preserved", got)
+			}
+			if child.State() != ScopeMerged {
+				t.Errorf("child state = %s, want merged", child.State())
+			}
+			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+				t.Errorf("child worktree should be destroyed after select, stat err = %v", err)
+			}
+		})
+	}
+}
+
+// TestSettle_ApplyOverDirtyBaselineWithDisjointDrift is the U1b + U1c law
+// at the settlement layer: a dirty baseline with path-disjoint parent drift
+// merges — the drift survives, the baseline's own content never conflicts
+// with itself, and the child's changes land on the parent.
+func TestSettle_ApplyOverDirtyBaselineWithDisjointDrift(t *testing.T) {
+	mgr := NewScopeManager(newMemStore(t))
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:dapp-parent", git.NewLocalGitSandbox(repo))
+
+	child, wtPath := dirtyBaselineFork(t, mgr, parent.ID(), "set:dapp-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The parent drifts on a path disjoint from the output's changes,
+	// keeping its own uncommitted baseline content.
+	if err := os.WriteFile(filepath.Join(repo, "drift.txt"), []byte("parent drift"), 0o644); err != nil {
+		t.Fatalf("write drift: %v", err)
+	}
+
+	if err := mgr.Settle(ctx, out.ID(), SettleApply); err != nil {
+		t.Fatalf("SettleApply over a dirty baseline with disjoint drift: %v", err)
+	}
+	if got := readRepoFile(t, repo, "result.txt"); got != "winner" {
+		t.Errorf("result.txt = %q, want the child's change landed", got)
+	}
+	if got := readRepoFile(t, repo, "drift.txt"); got != "parent drift" {
+		t.Errorf("drift.txt = %q, want the parent's disjoint drift preserved", got)
+	}
+	if got := readRepoFile(t, repo, "README.md"); got != "uncommitted" {
+		t.Errorf("README.md = %q, want the baseline's uncommitted content untouched", got)
+	}
+}
+
+// TestSettle_ApplyOverlapOverDirtyBaselineRefusesTyped covers the overlap
+// guard over a dirty baseline: a parent that changed a path the sealed
+// output also changes refuses with ErrApplyConflict and consumes nothing.
+// The baseline's own dirt is not an overlap — only a genuine path conflict
+// refuses.
+func TestSettle_ApplyOverlapOverDirtyBaselineRefusesTyped(t *testing.T) {
+	mgr := NewScopeManager(newMemStore(t))
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:dconf-parent", git.NewLocalGitSandbox(repo))
+
+	child, wtPath := dirtyBaselineFork(t, mgr, parent.ID(), "set:dconf-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("from child"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The parent drifts onto the output's own path.
+	if err := os.WriteFile(filepath.Join(repo, "result.txt"), []byte("from parent"), 0o644); err != nil {
+		t.Fatalf("write overlapping drift: %v", err)
+	}
+
+	err = mgr.Settle(ctx, out.ID(), SettleApply)
+	if !errors.Is(err, ErrApplyConflict) {
+		t.Fatalf("SettleApply over an overlapping path: %v, want ErrApplyConflict", err)
+	}
+	if out.State() != OutputUnconsumed {
+		t.Errorf("refused apply consumed the output: %s", out.State())
+	}
+	if got := readRepoFile(t, repo, "result.txt"); got != "from parent" {
+		t.Errorf("result.txt = %q after a refused apply; the parent's content must be untouched", got)
+	}
+	if got := readRepoFile(t, repo, "README.md"); got != "uncommitted" {
+		t.Errorf("README.md = %q after a refused apply; the baseline's uncommitted content must be untouched", got)
+	}
+
+	// The refused output is still settle-able: release ends it cleanly.
+	if err := mgr.Settle(ctx, out.ID(), SettleRelease); err != nil {
+		t.Fatalf("SettleRelease after a refused apply: %v", err)
 	}
 }
