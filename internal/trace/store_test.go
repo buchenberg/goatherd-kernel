@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"context"
@@ -346,19 +346,6 @@ func TestReservedOperationKindsAreUnreachable(t *testing.T) {
 	}
 	if got := reader.ToOperationContext().Operation; got != OpRead {
 		t.Errorf("ReadContext.ToOperationContext().Operation = %q, want %q", got, OpRead)
-	}
-
-	// OpMaterialize is now enforced, in the direction the old gap assertion
-	// predicted: a materialize context is required for Materialize, and any
-	// other operation kind is rejected (see
-	// TestMaterializeRejectsNonMaterializeOperationContext for the dispatch
-	// level; this pins the authorization helper itself).
-	trusted := trustedAppend.ToOperationContext(OpMaterialize)
-	if err := ensureMaterializeAuthorized(trusted); err != nil {
-		t.Errorf("ensureMaterializeAuthorized rejected a trusted materialize context: %v", err)
-	}
-	if err := ensureMaterializeAuthorized(trustedAppend.ToOperationContext(OpAppend)); err == nil {
-		t.Error("ensureMaterializeAuthorized accepted an append operation context, want rejection")
 	}
 }
 
@@ -864,7 +851,7 @@ func TestAppendRequiresTrustedContext(t *testing.T) {
 }
 
 func TestGoldenVectorsFromDisk(t *testing.T) {
-	data, err := os.ReadFile("testdata/kernel_abi_v0.json")
+	data, err := os.ReadFile("../../testdata/kernel_abi_v0.json")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}

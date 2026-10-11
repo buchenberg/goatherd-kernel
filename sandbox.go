@@ -44,43 +44,6 @@ type SandboxCapabilities struct {
 	Containment Containment
 }
 
-// WorkspaceState is a backend-neutral snapshot of a workspace. It replaces the
-// earlier git-specific checkpoint fields so any backend can be captured and
-// restored through one type.
-//
-// Data is backend-specific and opaque to the kernel. It uses map[string]any to
-// match RecordDraft.Payload and to be directly digestible by CanonicalDigest
-// without a JSON round-trip. A backend carrying opaque binary state must
-// base64-encode it into a string.
-//
-// A WorkspaceState is inherently reusable: Apply consumes nothing, so the same
-// value can be applied any number of times.
-type WorkspaceState struct {
-	// Backend identifies the backend that produced the state ("git",
-	// "containerd", ...). Apply rejects a state from a different backend.
-	Backend string
-	// Revision is an optional backend timeline position: the git HEAD SHA for
-	// the git backend, a snapshot key for a snapshot-backed backend.
-	Revision string
-	// Data carries the backend-specific payload.
-	Data map[string]any
-}
-
-// Digest returns the kernel canonical digest of the state, for trace records
-// and drift detection. It is deterministic: CanonicalDigest sorts keys at every
-// nesting level, so two states with the same content digest identically
-// regardless of map iteration order.
-//
-// It returns an error only if Data contains a value that cannot be canonically
-// marshaled. Callers recording a trace treat a digest failure as advisory.
-func (ws WorkspaceState) Digest() (string, error) {
-	return CanonicalDigest(map[string]any{
-		"backend":  ws.Backend,
-		"revision": ws.Revision,
-		"data":     ws.Data,
-	})
-}
-
 // SandboxSpec carries per-call runtime options for Create. Backend-specific
 // configuration (repository path, base image, credentials) belongs on the
 // backend constructor, not here.

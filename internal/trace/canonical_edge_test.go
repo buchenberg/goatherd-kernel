@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"bytes"
@@ -60,7 +60,7 @@ func (f canonicalVectorFile) all() []canonicalVector {
 // "1" and "1.0", and only the token text carries it.
 func loadEdgeVectors(t *testing.T) canonicalVectorFile {
 	t.Helper()
-	data, err := os.ReadFile("testdata/canonical_edge_vectors_v0.json")
+	data, err := os.ReadFile("../../testdata/canonical_edge_vectors_v0.json")
 	if err != nil {
 		t.Fatalf("read edge vectors: %v", err)
 	}

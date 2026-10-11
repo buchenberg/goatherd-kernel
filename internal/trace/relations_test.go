@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 // Execution relation tests (plan 02 §2), measured against the
 // relation_sequences group in testdata/execution_vectors_v0.json.

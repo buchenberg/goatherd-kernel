@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import "time"
 

@@ -715,7 +715,7 @@ func TestMaterializeCrashWindowReplayIsConsistent(t *testing.T) {
 
 	// Simulate the crash window: the captures are committed, the ledger
 	// entry is not.
-	if _, err := store.db.Exec("DELETE FROM materialization_intents WHERE materialize_intent_id = ?", req.AppendIntentID); err != nil {
+	if err := store.DeleteMaterializationIntent(context.Background(), req.AppendIntentID); err != nil {
 		t.Fatalf("delete ledger row: %v", err)
 	}
 
@@ -876,4 +876,18 @@ func TestMaterializeRejectsMixedSubstrateBatch(t *testing.T) {
 func jsonNumber(t *testing.T, n int) json.Number {
 	t.Helper()
 	return json.Number(strconv.Itoa(n))
+}
+
+// TestMaterializeAuthorizationHelper pins the dispatch-level authorization
+// helper: a materialize context is required, and any other operation kind is
+// rejected. (Split out of the store's reserved-operation-kinds test when the
+// store moved to internal/trace; the helper lives here.)
+func TestMaterializeAuthorizationHelper(t *testing.T) {
+	trusted := trustedAppend.ToOperationContext(OpMaterialize)
+	if err := ensureMaterializeAuthorized(trusted); err != nil {
+		t.Errorf("ensureMaterializeAuthorized rejected a trusted materialize context: %v", err)
+	}
+	if err := ensureMaterializeAuthorized(trustedAppend.ToOperationContext(OpAppend)); err == nil {
+		t.Error("ensureMaterializeAuthorized accepted an append operation context, want rejection")
+	}
 }

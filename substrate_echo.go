@@ -5,7 +5,11 @@ package shepherd
 // story and the reference for how a minimal substrate behaves — Python's
 // EchoSubstrate is the same double.
 
-import "context"
+import (
+	"context"
+
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
+)
 
 // EchoSubstrate echoes declaration payloads into capture drafts.
 type EchoSubstrate struct {
@@ -43,7 +47,7 @@ func (e *EchoSubstrate) Materialize(_ context.Context, records []Record) (Materi
 			Mode:            Capture,
 			SchemaRef:       record.Envelope.SchemaRef,
 			KindLabel:       kind,
-			Payload:         copyMap(record.Body.Payload),
+			Payload:         trace.CopyMap(record.Body.Payload),
 			CausedByFactIDs: []string{record.Envelope.RecordID},
 		})
 	}

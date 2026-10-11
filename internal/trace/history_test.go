@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 // Effective-history tests (plan 02 §3). The fold semantics — latest relation
 // per id wins, abandoned drops a child, adopted keeps it — are mirrored from

@@ -241,7 +241,7 @@ func ensureScope(mgr *ScopeManager, store *SQLiteTraceStore, ownerID string) *Sc
 // payload keys decode empty, and those children simply cannot propose
 // merges — the same refusal a pure-causal fork gets).
 func scanForkRecords(ctx context.Context, store *SQLiteTraceStore) ([]forkEdge, error) {
-	records, err := store.scanRecordsBySchema(ctx, SchemaScopeForked)
+	records, err := store.ScanRecordsBySchema(ctx, SchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan fork records: %w", err)
 	}
@@ -272,7 +272,7 @@ func scanForkRecords(ctx context.Context, store *SQLiteTraceStore) ([]forkEdge, 
 // state machine rejects it), so a collision is a corrupt trace and fails
 // the recovery loudly.
 func scanTerminalStates(ctx context.Context, store *SQLiteTraceStore) (map[string]ScopeState, error) {
-	records, err := store.scanRecordsBySchema(ctx, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
+	records, err := store.ScanRecordsBySchema(ctx, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
 	if err != nil {
 		return nil, fmt.Errorf("scan terminal records: %w", err)
 	}
@@ -323,7 +323,7 @@ func edgeFor(edges []forkEdge, childOwner string) *forkEdge {
 // bare root scope: the blob proves the scope existed even though it never
 // left a lifecycle record.
 func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *SQLiteTraceStore) error {
-	blobs, corrupt, err := store.loadCheckpointBlobs(ctx)
+	blobs, corrupt, err := store.LoadCheckpointBlobs(ctx)
 	if err != nil {
 		return fmt.Errorf("recover checkpoints: %w", err)
 	}
@@ -404,11 +404,11 @@ func markStaleCheckpoints(ctx context.Context, mgr *ScopeManager) error {
 // so a recovered output is settle-able; settled records mark the terminal
 // ones.
 func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *SQLiteTraceStore) error {
-	sealed, err := store.scanRecordsBySchema(ctx, SchemaRunOutputSealed)
+	sealed, err := store.ScanRecordsBySchema(ctx, SchemaRunOutputSealed)
 	if err != nil {
 		return fmt.Errorf("recover outputs: scan sealed records: %w", err)
 	}
-	settled, err := store.scanRecordsBySchema(ctx, SchemaRunOutputSettled)
+	settled, err := store.ScanRecordsBySchema(ctx, SchemaRunOutputSettled)
 	if err != nil {
 		return fmt.Errorf("recover outputs: scan settled records: %w", err)
 	}

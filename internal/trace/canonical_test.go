@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 // was hiding.
 func loadGolden(t *testing.T) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile("testdata/kernel_abi_v0.json")
+	data, err := os.ReadFile("../../testdata/kernel_abi_v0.json")
 	if err != nil {
 		t.Fatalf("failed to load golden vectors: %v", err)
 	}

@@ -381,7 +381,7 @@ func (m *ScopeManager) PruneCheckpoints(ctx context.Context, scopeID string) {
 	// Blob deletion runs outside the registry lock (database I/O) and is
 	// advisory: a failed delete must not resurrect an in-memory prune.
 	for _, cp := range pruned {
-		if err := m.store.deleteCheckpointBlob(ctx, cp.ID); err != nil {
+		if err := m.store.DeleteCheckpointBlob(ctx, cp.ID); err != nil {
 			slog.Warn("prune checkpoints: delete persisted blob failed (advisory)", "checkpoint", cp.ID, "err", err)
 		}
 	}

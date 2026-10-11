@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"crypto/sha256"
@@ -60,7 +60,7 @@ func CanonicalJSONBytes(v any) ([]byte, error) {
 	return canonicalJSON(v, false)
 }
 
-// canonicalJSONASCIIBytes encodes with CPython's json.dumps *default*
+// CanonicalJSONASCIIBytes encodes with CPython's json.dumps *default*
 // (ensure_ascii=True), which is a different escaping flavour from the one the
 // record digest uses.
 //
@@ -70,7 +70,7 @@ func CanonicalJSONBytes(v any) ([]byte, error) {
 // `_json_dumps` helper omits the argument, so the context id, the batch digest and
 // the stored body/receipt JSON all use ensure_ascii=True. With an ASCII-only
 // payload the two agree, which is why this is invisible in the existing tests.
-func canonicalJSONASCIIBytes(v any) ([]byte, error) {
+func CanonicalJSONASCIIBytes(v any) ([]byte, error) {
 	return canonicalJSON(v, true)
 }
 

@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 // ABI law tests (T1.8, plan 01 §6), ported from
 // shepherd2/tests/test_kernel_abi_v0_laws.py — 25 executable laws that pin the

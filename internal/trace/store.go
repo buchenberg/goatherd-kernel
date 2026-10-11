@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"context"
@@ -91,8 +91,8 @@ func (s *SQLiteTraceStore) WithCheckpointBlobLimit(limit int64) *SQLiteTraceStor
 // long session cannot balloon the trace database unnoticed.
 const DefaultCheckpointBlobLimit = 1 << 20
 
-// checkpointBlobLimitOrDefault resolves the effective limit.
-func (s *SQLiteTraceStore) checkpointBlobLimitOrDefault() int64 {
+// CheckpointBlobLimitOrDefault resolves the effective limit.
+func (s *SQLiteTraceStore) CheckpointBlobLimitOrDefault() int64 {
 	if s.checkpointBlobLimit > 0 {
 		return s.checkpointBlobLimit
 	}
@@ -444,11 +444,11 @@ type scannedRecord struct {
 	Payload   map[string]any
 }
 
-// scanRecordsBySchema returns every retained record whose schema_ref is one
+// ScanRecordsBySchema returns every retained record whose schema_ref is one
 // of the given refs, each with its owner path (path_ref) and payload. A
 // record retained on multiple paths appears once per path; lifecycle
 // records are single-path by construction.
-func (s *SQLiteTraceStore) scanRecordsBySchema(gctx context.Context, schemaRefs ...string) ([]scannedRecord, error) {
+func (s *SQLiteTraceStore) ScanRecordsBySchema(gctx context.Context, schemaRefs ...string) ([]scannedRecord, error) {
 	if len(schemaRefs) == 0 {
 		return nil, nil
 	}
@@ -831,7 +831,7 @@ func (s *SQLiteTraceStore) prepareAppend(tx *sql.Tx, batch AppendBatch, ctx Oper
 				ContextRef:   retCtx.ContextID,
 				KindLabel:    kindLabel,
 			}
-			body := RecordBody{Payload: copyMap(draft.Payload)}
+			body := RecordBody{Payload: CopyMap(draft.Payload)}
 			fact := Record{Envelope: envelope, Body: body, View: view}
 
 			facts = append(facts, fact)
@@ -1593,7 +1593,7 @@ func (s *SQLiteTraceStore) insertWitnessRecordIfMissing(gctx context.Context, pl
 			Mode:       Capture,
 			WitnessRef: plan.witnessRef,
 		},
-		Body: RecordBody{Payload: copyMap(plan.body)},
+		Body: RecordBody{Payload: CopyMap(plan.body)},
 		View: &RecordView{
 			TraceOwnerID: witnessTraceOwnerID,
 			OwnerOrdinal: ordinal,
@@ -1889,7 +1889,7 @@ func contextPayload(draft RetainedContext, ctx OperationContext) RetainedContext
 // With an ASCII-only payload the last point is invisible, which is why this
 // survived: the ids were simply always different, and nothing compared them.
 func contextIDFor(appendIntentID string, groupIndex int, payload RetainedContext) (string, error) {
-	body, err := canonicalJSONASCIIBytes(map[string]any{
+	body, err := CanonicalJSONASCIIBytes(map[string]any{
 		"active_binding_refs":       payload.ActiveBindingRefs,
 		"capability_witness_refs":   payload.CapabilityWitnessRefs,
 		"semantic_environment_refs": payload.SemanticEnvironmentRefs,
@@ -1926,10 +1926,10 @@ func contextEqual(a, b RetainedContext) bool {
 func ordinaryWitnessPlan(ctx RetainedContext, opCtx OperationContext) (witnessPlan, error) {
 	body := map[string]any{
 		"actor_ref":                 opCtx.ActorRef,
-		"authority_refs":            nonNilStrings(ctx.CapabilityWitnessRefs),
-		"active_binding_refs":       nonNilStrings(ctx.ActiveBindingRefs),
-		"semantic_environment_refs": nonNilStrings(ctx.SemanticEnvironmentRefs),
-		"visibility_policy_refs":    nonNilStrings(ctx.VisibilityPolicyRefs),
+		"authority_refs":            NonNilStrings(ctx.CapabilityWitnessRefs),
+		"active_binding_refs":       NonNilStrings(ctx.ActiveBindingRefs),
+		"semantic_environment_refs": NonNilStrings(ctx.SemanticEnvironmentRefs),
+		"visibility_policy_refs":    NonNilStrings(ctx.VisibilityPolicyRefs),
 		"provenance_policy_refs":    []string{},
 		"substrate_ref":             ctx.SubstrateRef,
 		"containment":               string(ctx.Containment),
@@ -1957,12 +1957,12 @@ func ordinaryWitnessPlan(ctx RetainedContext, opCtx OperationContext) (witnessPl
 	}, nil
 }
 
-// nonNilStrings returns an empty (non-nil) slice for nil input.
+// NonNilStrings returns an empty (non-nil) slice for nil input.
 //
 // The canonical writer emits null for a nil slice and [] for an empty one, and
 // Python serialises an empty tuple as []. Without this a Go zero value would
 // canonicalise differently from the Python it is supposed to match.
-func nonNilStrings(ss []string) []string {
+func NonNilStrings(ss []string) []string {
 	if ss == nil {
 		return []string{}
 	}
@@ -2111,10 +2111,10 @@ func contextDraftJSON(rc *RetainedContext) map[string]any {
 		draft["reuse_context_id"] = rc.ContextID
 		return draft
 	}
-	draft["active_binding_refs"] = nonNilStrings(rc.ActiveBindingRefs)
-	draft["capability_witness_refs"] = nonNilStrings(rc.CapabilityWitnessRefs)
-	draft["semantic_environment_refs"] = nonNilStrings(rc.SemanticEnvironmentRefs)
-	draft["visibility_policy_refs"] = nonNilStrings(rc.VisibilityPolicyRefs)
+	draft["active_binding_refs"] = NonNilStrings(rc.ActiveBindingRefs)
+	draft["capability_witness_refs"] = NonNilStrings(rc.CapabilityWitnessRefs)
+	draft["semantic_environment_refs"] = NonNilStrings(rc.SemanticEnvironmentRefs)
+	draft["visibility_policy_refs"] = NonNilStrings(rc.VisibilityPolicyRefs)
 	draft["substrate_ref"] = rc.SubstrateRef
 	draft["containment"] = string(rc.Containment)
 	return draft
@@ -2143,14 +2143,14 @@ func batchDigest(batch AppendBatch, ctx OperationContext) (string, error) {
 				"mode":                 string(d.Mode),
 				"schema_ref":           schemaRef,
 				"payload":              d.Payload,
-				"caused_by_fact_ids":   nonNilStrings(d.CausedByFactIDs),
-				"caused_by_local_refs": nonNilStrings(d.CausedByLocalRefs),
+				"caused_by_fact_ids":   NonNilStrings(d.CausedByFactIDs),
+				"caused_by_local_refs": NonNilStrings(d.CausedByLocalRefs),
 			})
 		}
 		groups = append(groups, map[string]any{
 			"trace_owner_id":   g.TraceOwnerID,
 			"retained_context": contextDraftJSON(g.RetainedContext),
-			"causal_parents":   nonNilStrings(g.CausalParents),
+			"causal_parents":   NonNilStrings(g.CausalParents),
 			"fact_drafts":      drafts,
 		})
 	}
@@ -2165,7 +2165,7 @@ func batchDigest(batch AppendBatch, ctx OperationContext) (string, error) {
 		"groups":             groups,
 	}
 
-	b, err := canonicalJSONASCIIBytes(payload)
+	b, err := CanonicalJSONASCIIBytes(payload)
 	if err != nil {
 		return "", err
 	}
@@ -2223,7 +2223,7 @@ func jsonToStrings(s string) []string {
 	return result
 }
 
-func copyMap(m map[string]any) map[string]any {
+func CopyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
@@ -2481,7 +2481,7 @@ func (s *SQLiteTraceStore) insertWitnessRecordIfMissingTx(tx *sql.Tx, plan witne
 			Mode:       Capture,
 			WitnessRef: plan.witnessRef,
 		},
-		Body: RecordBody{Payload: copyMap(plan.body)},
+		Body: RecordBody{Payload: CopyMap(plan.body)},
 		View: &RecordView{
 			TraceOwnerID: witnessTraceOwnerID,
 			OwnerOrdinal: ordinal,

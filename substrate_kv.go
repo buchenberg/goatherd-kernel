@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"strings"
 	"sync"
 )
@@ -106,7 +107,7 @@ func (k *KVSubstrate) Materialize(_ context.Context, records []Record) (Material
 			tx.Rollback()
 			return MaterializationResult{}, err
 		}
-		valueJSON, err := canonicalJSONASCIIBytes(value)
+		valueJSON, err := trace.CanonicalJSONASCIIBytes(value)
 		if err != nil {
 			tx.Rollback()
 			return MaterializationResult{}, &SubstrateError{fmt.Sprintf("kv put value for key %q is not serializable", key)}

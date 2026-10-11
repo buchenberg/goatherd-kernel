@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 import (
 	"bytes"
@@ -100,7 +100,7 @@ type expectedReceipt struct {
 // canonicalise differently.
 func loadStoreVectors(t *testing.T) storeVectorDoc {
 	t.Helper()
-	data, err := os.ReadFile("testdata/store_vectors_v0.json")
+	data, err := os.ReadFile("../../testdata/store_vectors_v0.json")
 	if err != nil {
 		t.Fatalf("read store vectors: %v", err)
 	}
@@ -237,7 +237,7 @@ func buildVectorGroup(t *testing.T, g vectorGroup, contextIDs map[[2]int]string)
 
 	out := AppendGroup{
 		TraceOwnerID:  g.TraceOwnerID,
-		CausalParents: nonNilStrings(g.CausalParents),
+		CausalParents: NonNilStrings(g.CausalParents),
 	}
 
 	if g.RetainedContext != nil {

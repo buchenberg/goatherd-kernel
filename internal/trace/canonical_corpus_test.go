@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 // The T1.3 property corpus: 200 seeded-random payloads whose expected bytes
 // and digests were produced by the Python reference, not by Go.
@@ -61,7 +61,7 @@ var corpusSizes = map[string]int{
 
 func loadCorpus(t *testing.T) canonicalCorpusFile {
 	t.Helper()
-	data, err := os.ReadFile("testdata/canonical_corpus_v0.json")
+	data, err := os.ReadFile("../../testdata/canonical_corpus_v0.json")
 	if err != nil {
 		t.Fatalf("read corpus: %v", err)
 	}

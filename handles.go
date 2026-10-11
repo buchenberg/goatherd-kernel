@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"sync"
 	"time"
 )
@@ -228,7 +229,7 @@ func (c *TaskControl) Publish(ctx context.Context, kind string, data map[string]
 				Mode:      Capture,
 				SchemaRef: SchemaRuntimePublishedFact,
 				KindLabel: "fact_published",
-				Payload:   map[string]any{"kind": kind, "data": nonNilMap(data)},
+				Payload:   map[string]any{"kind": kind, "data": trace.NonNilMap(data)},
 			}},
 		}},
 	})

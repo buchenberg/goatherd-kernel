@@ -1,4 +1,4 @@
-package shepherd
+package trace
 
 // Effective-history projection (plan 02 §3), mirroring
 // shepherd2/schemas/history.py: the "what did the run tree actually do"
