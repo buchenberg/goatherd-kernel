@@ -716,11 +716,11 @@ func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.Workspa
 	// alone do not — git's reachability traversal cannot see the trace
 	// store, and write-tree trees are otherwise unreferenced.
 	if err := g.pinTree(ctx, baseSHA); err != nil {
-		return fmt.Errorf("git sandbox: annotate delta base: %w", err)
+		return fmt.Errorf("git sandbox: annotate delta base: pin the baseline tree: %w", err)
 	}
 	if tree, _ := delta.Data["tree_sha"].(string); tree != "" {
 		if err := g.pinTree(ctx, tree); err != nil {
-			return fmt.Errorf("git sandbox: annotate delta base: %w", err)
+			return fmt.Errorf("git sandbox: annotate delta base: pin the delta tree: %w", err)
 		}
 	}
 
@@ -746,7 +746,15 @@ const stateRefPrefix = "refs/shepherd/states/"
 func (g *GitSandbox) pinTree(ctx context.Context, treeSHA string) error {
 	w := g.work()
 	if _, err := w.run(ctx, "update-ref", stateRefPrefix+treeSHA, treeSHA); err != nil {
-		return fmt.Errorf("pin state tree %s: %w", treeSHA, err)
+		// Sibling seals can race on a shared pin: forks from the same
+		// baseline resolve the identical tree, so concurrent Seals
+		// update the same ref. The pin is idempotent and keyed by the
+		// tree's own SHA — an existing ref with the right value is
+		// success, whatever made the update fail.
+		if got, rerr := w.run(ctx, "rev-parse", stateRefPrefix+treeSHA); rerr == nil && got == treeSHA {
+			return nil
+		}
+		return fmt.Errorf("pin state tree %s: the tree is not readable (likely pruned by garbage collection) or the ref could not be updated: %w", treeSHA, err)
 	}
 	return nil
 }
