@@ -29,9 +29,10 @@ contain breaking changes, which are called out below.
 ### Nested module
 
 `sandbox/containerd` v0.2.1 shipped ahead of this release with the
-unprivileged-spec fix (PR #40); see its section below. The adapter keeps
-requiring core `v0.11.0` — v0.12.0 is additive, so no nested repin release
-is needed.
+unprivileged-spec fix (PR #40), still requiring core `v0.11.0` — v0.12.0
+is additive, so no repin rode this release. The follow-up train repins
+the adapter to core `v0.12.0` and drops the committed `replace` directive:
+see the `v0.2.2` section below.
 
 ## [sandbox/containerd/v0.2.2] - 2026-10-11
 
