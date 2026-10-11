@@ -756,9 +756,8 @@ func TestLawFullInternalReadsRequireTrustedAuthority(t *testing.T) {
 }
 
 // TestLawCutSliceModeLaws ports the mode-filter half of
-// test_cut_slice_mode_and_projection_laws. The projection half is not portable
-// yet: ensure_projection_compatible and the execution schemas land with plan 02,
-// so it is recorded as a dependency in docs/law-coverage.md rather than faked.
+// test_cut_slice_mode_and_projection_laws; the projection half is pinned by
+// its companion below, TestLawCutSliceProjectionLaws.
 func TestLawCutSliceModeLaws(t *testing.T) {
 	store := newMemStore(t)
 	declaration := lawAppendDrafts(t, store, "law:cut-mode:declaration", "owner:cut-mode",
