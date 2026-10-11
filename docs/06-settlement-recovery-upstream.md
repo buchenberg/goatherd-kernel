@@ -126,11 +126,14 @@ The delta's data becomes:
 ```
 
 `Seal` records `base_tree_sha` at seal time, from the fork baseline it
-already holds (the baseline's `tree_sha`; for a legacy `stash_sha` baseline,
-`rev-parse <stash_sha>^{tree}` — resolved while sealing, so the delta never
-depends on a later `rev-parse` of a possibly-GC'd minted commit). The
-sealed record's payload already carries both full states, so recovery-rebuilt
-outputs inherit the pairing for free.
+already holds: the baseline's `tree_sha` for new-style baselines; for a
+legacy `stash_sha` baseline, `rev-parse <stash_sha>^{tree}` — and for a
+legacy *clean* baseline, whose `stash_sha` is the empty string
+(`stashCreate` returns "" for a clean tree), `rev-parse <head_sha>^{tree}`
+instead, which is the same tree. Resolved while sealing either way, so the
+delta never depends on a later `rev-parse` of a possibly-GC'd minted
+commit. The sealed record's payload already carries both full states, so
+recovery-rebuilt outputs inherit the pairing for free.
 
 Semantics: merge base = `base_tree_sha`, theirs = `tree_sha`, ours = the
 parent worktree as it stands (uncommitted content included, via the same
@@ -142,10 +145,16 @@ settlement layer, with the backend returning a plain error as today).
 Special cases, stated so no implementation reintroduces the silent no-op:
 
 - `tree_sha == base_tree_sha` — the child changed nothing; a true no-op.
-- a delta with neither `stash_sha` nor `tree_sha` is **malformed** and
-  returns an error. Today's code treats it as a clean no-op; that is
-  precisely the silent-success failure this plan must close.
-- a legacy `stash_sha`-only delta keeps the stash-apply path unchanged.
+- a delta with **no recognizable key at all** (neither `stash_sha` nor
+  `tree_sha` present in `Data`) is **malformed** and returns an error.
+  Today's code treats that shape as a clean no-op; that is precisely the
+  silent-success failure this plan must close. Presence is checked with
+  `v, ok := delta.Data[...]`, not by value: a legacy delta whose
+  `stash_sha` key is *present but empty* is a legitimate legacy clean
+  capture — a no-op, not an error — and must stay distinguishable from
+  the malformed shape.
+- a legacy `stash_sha`-carrying delta (empty or not) keeps the
+  stash-apply path unchanged, with the empty case the no-op above.
 
 Implementation candidate: `git merge-tree --write-tree
 --merge-base=<base_tree_sha> <ours_tree> <tree_sha>` (git ≥ 2.38), where
@@ -271,7 +280,8 @@ in Phase D.
     child deletion lands, and a conflicting delta refuses typed with the
     parent untouched;
   - `ApplyDelta` on a no-change delta (`tree_sha == base_tree_sha`) is a
-    no-op; a malformed delta (neither key) errors;
+    no-op; a malformed delta (no recognizable key) errors, while a legacy
+    clean-capture delta (`stash_sha` present but empty) stays a no-op;
   - legacy-state apply and apply-delta still work (fixtures with
     `stash_sha` payloads);
   - golden/store vectors updated for the new payload keys.
@@ -352,11 +362,12 @@ incompatibility and its sole consumer is coordinated.
   plus `base_tree_sha` on sealed outputs) touches recorded states. All
   vectors updated in Phase A; old traces are read-compatible by the legacy
   apply paths.
-- **git plumbing portability**: `write-tree`, `read-tree --reset -u`,
-  `checkout-index` are ancient stable plumbing — lower risk than the
-  `stash create` behavior this replaces; `merge-tree --write-tree` is the
-  youngest command involved and is risk-tracked above. CI runs all three
-  OSes; the yaah experience (symlinked temp dirs, 8.3 names) says path
+- **git plumbing portability**: `write-tree` and `read-tree -u` are
+  ancient stable plumbing — lower risk than the `stash create` behavior
+  this replaces; `merge-tree --write-tree` is the youngest command
+  involved and is risk-tracked above (a `checkout-index`-based landing
+  step, if chosen, is ancient plumbing too). CI runs all three OSes; the
+  yaah experience (symlinked temp dirs, 8.3 names) says path
   *comparisons* are the portability hazard, and neither digest nor diff
   compares paths.
 - **Scope creep into checkpoint staleness**: explicitly refused — revision
