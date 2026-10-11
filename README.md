@@ -336,8 +336,9 @@ so a wrong path fails loudly instead of serving an empty or modified trace.
 
 The module is organized by component, and the component packages are
 public: import them directly. The root `shepherd` package is the runtime
-layer — the scope tree, merge gate, settlement, and recovery, with the task handles and supervision rules engine as their own packages
-that compose the components. The dependency graph is acyclic, with `trace`
+layer — the scope tree, merge gate, settlement, and recovery — and the
+task handles and supervision rules engine compose it from their own
+packages. The dependency graph is acyclic, with `trace`
 as the leaf:
 
 ```
@@ -368,7 +369,9 @@ component symbols (`shepherd.NewSQLiteTraceStore` -> `trace.NewSQLiteTraceStore`
 `shepherd.NewLocalGitSandbox` -> `sandbox.NewLocalGitSandbox`, and so on);
 the CHANGELOG's v0.11.0 section carries the full migration table. Runtime
 symbols (`shepherd.NewScope`, `shepherd.NewScopeManager`, ...) are
-unchanged.
+unchanged. (The git constructors have since moved again — to `sandbox/git`
+— and the task/supervisor symbols to their own packages; the CHANGELOG's
+Unreleased section carries those migrations.)
 
 \* `git` ships in the core module as the `sandbox/git` subpackage; the containerd backend is a nested
 module (`sandbox/containerd`) that needs a Linux environment at runtime —
@@ -468,6 +471,18 @@ was designed with a WSL2 host in mind: the FIFODir knob exists precisely so a
 non-root WSL2 client can drive the daemon); a stock image and the overlayfs
 snapshotter suffice. The module needs that Linux environment at runtime and
 can never be this module's default.
+
+**Unprivileged operation.** Since `sandbox/containerd/v0.2.1` the backend
+works for unprivileged clients — any user sharing only the containerd
+socket group. The init spec is built from the image config blob read
+through the daemon's content store (env, working directory, numeric
+`uid[:gid]`), never from the client process's filesystem: the previous
+`oci.WithImageConfig` path resolved the image user by reading the unpacked
+rootfs, which the daemon's 0700-root snapshot directories make impossible
+for anyone but root. Verified live (PR #40, 2026-10-11): an unprivileged
+client passed `Create` and the contract exec where it previously failed
+with EACCES, and a full end-to-end session ran with in-sandbox tool exec
+(`pwd` = `/workspace` inside the container).
 
 **State durability.** A first run against a *cold* daemon (fresh namespace, no
 image) found an eleventh defect the warm-daemon runs had masked, and a twelfth
@@ -794,7 +809,6 @@ The `sandbox/containerd/` adapter is a nested module with its own `go.mod`, so i
 
 ## License
 
-No `LICENSE` file is currently present in this repository, so no rights are granted
-for reuse or redistribution yet. A license should be added before this module is
-consumed as a dependency or published. The sibling `yaah` project uses
-`MIT OR Apache-2.0`.
+MIT — see [LICENSE](LICENSE), matching the upstream Python reference. The
+`sandbox/containerd` nested module carries the same license under its own
+path.

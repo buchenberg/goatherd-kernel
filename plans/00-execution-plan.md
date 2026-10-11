@@ -594,10 +594,13 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
       Python reference)` job is green on every push; the pin
       `shepherd2@d34d5ca3` and its per-file provenance are recorded in
       `testdata/UPSTREAM.md` and `golden_provenance_test.go`.)*
-- [ ] Live containerd verification recorded; nested module consumable.
-      *(The nested module is consumable — `sandbox/containerd/v0.2.2`
-      passes the release-verify gate and resolves from a clean consumer —
-      but a recorded live daemon verification is still owed.)*
+- [x] Live containerd verification recorded; nested module consumable.
+      *(The README's daemon-status section records the live verifications:
+      the 12/12 soak and 9/9 cold-namespace suite at v0.1.4, and the
+      unprivileged end-to-end session at v0.2.1 (PR #40) — Create and
+      contract exec from a socket-group-only client, in-sandbox tool exec
+      verified. The nested module is consumable: v0.2.2 passes the
+      release-verify gate and resolves from a clean consumer.)*
 - [x] Durability: full restart-recovery suite green on 3 OSes. *(Evidence:
       `recovery_test.go` and the checkpoint/durability suite are untagged
       and run under `go test -race ./...` in the ubuntu/macos/windows CI
@@ -605,9 +608,13 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
 - [x] `context.Context` throughout; no wall-clock-ordered IDs. *(Evidence:
       the plan-05 §6 sweep shipped in v0.9.0 (M5); record IDs are
       content-addressed digests, not timestamps.)*
-- [ ] LICENSE, CHANGELOG through v0.9.0, README audited. *(LICENSE is MIT;
-      the CHANGELOG now covers through v0.12.0; the README audit pass is
-      still owed.)*
+- [x] LICENSE, CHANGELOG through v0.9.0, README audited. *(LICENSE is MIT,
+      added at `a756f0d`, matching upstream; the CHANGELOG covers through
+      v0.12.0 plus the Unreleased section; the README audit pass checked
+      every Go snippet against the current signatures and the package
+      graph, corrected the stale license section — it claimed no LICENSE
+      file existed — recorded the v0.2.1 live run, and reconciled the
+      v0.11 migration notes with the later moves.)*
 - [ ] yaah integrated on ≥v0.9.0 for one full release cycle without
       workarounds.
 - [ ] Decision: API freeze of Ring-0-adjacent surface (store, canonical,
