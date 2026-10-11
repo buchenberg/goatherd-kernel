@@ -1,7 +1,9 @@
-package shepherd
+package supervision
 
 import (
 	"fmt"
+	scope "github.com/buchenberg/shepherd-kernel-go/internal/scope"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"sort"
 	"strings"
 	"sync"
@@ -32,10 +34,10 @@ type SupervisionRule struct {
 	// Name identifies this rule in logs and traces.
 	Name string
 	// Match returns true if this rule applies to the effect event.
-	Match func(EffectEvent) bool
+	Match func(trace.EffectEvent) bool
 	// Action returns the intervention to take, or nil for observe-only.
-	// The scope parameter is the ScopeManager lookup for the event's owner.
-	Action func(event EffectEvent) *Intervention
+	// The scope parameter is the scope.ScopeManager lookup for the event's owner.
+	Action func(event trace.EffectEvent) *Intervention
 }
 
 // Supervisor watches sub-agent effect streams and evaluates rules against
@@ -45,11 +47,11 @@ type SupervisionRule struct {
 // The supervisor is stateless by default — rules that need state (error
 // rates, repetition tracking) maintain their own via closures.
 type Supervisor struct {
-	manager       *ScopeManager
-	bus           *EffectBus
+	manager       *scope.ScopeManager
+	bus           *trace.EffectBus
 	rules         []SupervisionRule
 	interventions chan Intervention
-	subscription  <-chan EffectEvent
+	subscription  <-chan trace.EffectEvent
 	subscriberID  string
 	done          chan struct{}
 	closeOnce     sync.Once
@@ -61,7 +63,7 @@ type Supervisor struct {
 // returned channel.
 //
 // Call Close() to stop the supervisor's background goroutine.
-func NewSupervisor(manager *ScopeManager, bus *EffectBus) *Supervisor {
+func NewSupervisor(manager *scope.ScopeManager, bus *trace.EffectBus) *Supervisor {
 	return &Supervisor{
 		manager:       manager,
 		bus:           bus,
@@ -140,7 +142,7 @@ func (s *Supervisor) loop() {
 //   - InterventionDeny → block the tool call, return the reason to the model
 //   - InterventionInject → proceed but inject guidance into the next turn
 //   - InterventionHalt → stop the sub-agent entirely
-func (s *Supervisor) CheckCall(event EffectEvent) *Intervention {
+func (s *Supervisor) CheckCall(event trace.EffectEvent) *Intervention {
 	s.mu.RLock()
 	rules := make([]SupervisionRule, len(s.rules))
 	copy(rules, s.rules)
@@ -158,7 +160,7 @@ func (s *Supervisor) CheckCall(event EffectEvent) *Intervention {
 	return nil
 }
 
-func (s *Supervisor) evaluate(event EffectEvent) {
+func (s *Supervisor) evaluate(event trace.EffectEvent) {
 	s.mu.RLock()
 	rules := make([]SupervisionRule, len(s.rules))
 	copy(rules, s.rules)
@@ -222,7 +224,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 // InterventionDiscard or InterventionDeny.
 //
 // The proposal is presented to the rules as a synthetic effect event — Mode
-// Declaration, SchemaRef shepherd.merge.proposed.v1, KindLabel
+// trace.Declaration, SchemaRef shepherd.merge.proposed.v1, KindLabel
 // "merge:proposed" — carrying the changed paths, so the same rule set that
 // watches tool calls can watch merges. This is the emitter that makes
 // InterventionDiscard reachable: before it, nothing in the kernel produced
@@ -230,16 +232,16 @@ func (s *Supervisor) Halt(scopeID string) error {
 //
 // The returned intervention is the rules' verdict only; acting on it is the
 // caller's decision, unlike Halt which executes immediately.
-func (s *Supervisor) ReviewMerge(scopeID string, proposal MergeProposal) *Intervention {
+func (s *Supervisor) ReviewMerge(scopeID string, proposal scope.MergeProposal) *Intervention {
 	paths := make([]string, 0, len(proposal.Changes))
 	for _, c := range proposal.Changes {
 		paths = append(paths, c.Path)
 	}
 
-	event := EffectEvent{
+	event := trace.EffectEvent{
 		TraceOwnerID: strings.TrimPrefix(proposal.ChildScopeID, "scope:"),
-		Mode:         Declaration,
-		SchemaRef:    SchemaMergeProposed,
+		Mode:         trace.Declaration,
+		SchemaRef:    scope.SchemaMergeProposed,
 		KindLabel:    "merge:proposed",
 		Payload: map[string]any{
 			"child_scope":     proposal.ChildScopeID,
@@ -265,13 +267,13 @@ func (s *Supervisor) ReviewMerge(scopeID string, proposal MergeProposal) *Interv
 func DestructiveToolRule() SupervisionRule {
 	return SupervisionRule{
 		Name: "destructive_file_guard",
-		Match: func(e EffectEvent) bool {
-			if e.Mode != Declaration {
+		Match: func(e trace.EffectEvent) bool {
+			if e.Mode != trace.Declaration {
 				return false // only intercept intents, not outcomes
 			}
 			return isDestructiveToolCall(e)
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{
 				Type:    InterventionInject,
 				ScopeID: fmt.Sprintf("scope:%s", e.TraceOwnerID),
@@ -288,7 +290,7 @@ func DestructiveToolRule() SupervisionRule {
 // NOT a security boundary: shell expansion (e.g. `rm${IFS}-rf /`) bypasses
 // substring matching. The blocking DestructiveToolGuard uses default-deny
 // for bash instead (see isBlockableToolCall).
-func isDestructiveToolCall(e EffectEvent) bool {
+func isDestructiveToolCall(e trace.EffectEvent) bool {
 	// Check bash commands for destructive patterns
 	if e.SchemaRef == "yaah.tool.bash.v1" || e.KindLabel == "bash" {
 		if cmd, ok := e.Payload["cmd"].(string); ok {
@@ -322,7 +324,7 @@ func isDestructiveToolCall(e EffectEvent) bool {
 //
 // Structured tools (write/delete) are precise and blockable individually;
 // they don't invoke a shell.
-func isBlockableToolCall(e EffectEvent) bool {
+func isBlockableToolCall(e trace.EffectEvent) bool {
 	// Default-deny: any bash command goes through a shell and is
 	// potentially destructive beyond what pattern matching can verify.
 	if e.SchemaRef == "yaah.tool.bash.v1" || e.KindLabel == "bash" {
@@ -355,13 +357,13 @@ func isBlockableToolCall(e EffectEvent) bool {
 func DestructiveToolGuard() SupervisionRule {
 	return SupervisionRule{
 		Name: "destructive_file_block",
-		Match: func(e EffectEvent) bool {
-			if e.Mode != Declaration {
+		Match: func(e trace.EffectEvent) bool {
+			if e.Mode != trace.Declaration {
 				return false // only intercept intents, not outcomes
 			}
 			return isBlockableToolCall(e)
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{
 				Type:    InterventionDeny,
 				ScopeID: fmt.Sprintf("scope:%s", e.TraceOwnerID),
@@ -388,14 +390,14 @@ func HighErrorRateRule(threshold float64, window int) SupervisionRule {
 
 	return SupervisionRule{
 		Name: "error_rate_guard",
-		Match: func(e EffectEvent) bool {
-			if e.Mode != Capture || e.KindLabel == "turn:started" || e.KindLabel == "turn:completed" || e.KindLabel == "turn:failed" {
+		Match: func(e trace.EffectEvent) bool {
+			if e.Mode != trace.Capture || e.KindLabel == "turn:started" || e.KindLabel == "turn:completed" || e.KindLabel == "turn:failed" {
 				return false
 			}
 			_, hasSuccess := e.Payload["success"]
 			return hasSuccess
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			mu.Lock()
 			defer mu.Unlock()
 
@@ -454,10 +456,10 @@ func StuckDetectionRule(repeatThreshold int) SupervisionRule {
 
 	return SupervisionRule{
 		Name: "stuck_detection",
-		Match: func(e EffectEvent) bool {
-			return e.Mode == Declaration && e.KindLabel != "turn:created" && e.KindLabel != "turn:started"
+		Match: func(e trace.EffectEvent) bool {
+			return e.Mode == trace.Declaration && e.KindLabel != "turn:created" && e.KindLabel != "turn:started"
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			mu.Lock()
 			defer mu.Unlock()
 

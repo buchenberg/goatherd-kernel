@@ -1,7 +1,9 @@
-package shepherd
+package supervision
 
 import (
 	"context"
+	scope "github.com/buchenberg/shepherd-kernel-go/internal/scope"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"strings"
 	"testing"
 	"time"
@@ -9,19 +11,19 @@ import (
 
 func TestSupervisor_BasicRuleMatch(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, bus)
 
 	matched := false
 	supervisor.AddRule(SupervisionRule{
 		Name: "test_rule",
-		Match: func(e EffectEvent) bool {
+		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			matched = true
 			return &Intervention{
 				Type:    InterventionInject,
@@ -36,10 +38,10 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 	defer supervisor.Close()
 
 	// Publish a matching event
-	bus.Publish(EffectEvent{
+	bus.Publish(trace.EffectEvent{
 		RecordID:     "sha256:test",
 		TraceOwnerID: "sub:worker",
-		Mode:         Declaration,
+		Mode:         trace.Declaration,
 		KindLabel:    "bash",
 		Payload:      map[string]any{"cmd": "ls"},
 	})
@@ -63,18 +65,18 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 
 func TestSupervisor_NonMatchingRule(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, bus)
 
 	supervisor.AddRule(SupervisionRule{
 		Name: "bash_only",
-		Match: func(e EffectEvent) bool {
+		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{Type: InterventionInject, ScopeID: "x"}
 		},
 	})
@@ -83,9 +85,9 @@ func TestSupervisor_NonMatchingRule(t *testing.T) {
 	defer supervisor.Close()
 
 	// Publish a non-matching event
-	bus.Publish(EffectEvent{
+	bus.Publish(trace.EffectEvent{
 		KindLabel: "read_file",
-		Mode:      Declaration,
+		Mode:      trace.Declaration,
 	})
 
 	// Should NOT receive intervention
@@ -99,25 +101,25 @@ func TestSupervisor_NonMatchingRule(t *testing.T) {
 
 func TestSupervisor_FirstRuleWins(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, bus)
 
 	var firstCalled bool
 	supervisor.AddRule(SupervisionRule{
 		Name:  "first",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			firstCalled = true
 			return &Intervention{Type: InterventionInject, ScopeID: "x"}
 		},
 	})
 	supervisor.AddRule(SupervisionRule{
 		Name:  "second",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{Type: InterventionHalt, ScopeID: "x"}
 		},
 	})
@@ -125,7 +127,7 @@ func TestSupervisor_FirstRuleWins(t *testing.T) {
 	supervisor.Start("first-wins")
 	defer supervisor.Close()
 
-	bus.Publish(EffectEvent{KindLabel: "test"})
+	bus.Publish(trace.EffectEvent{KindLabel: "test"})
 
 	select {
 	case iv := <-supervisor.Interventions():
@@ -142,17 +144,17 @@ func TestSupervisor_FirstRuleWins(t *testing.T) {
 
 func TestSupervisor_ObserveOnlyRule(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, bus)
 
 	// Rule that matches but returns nil (observe-only)
 	supervisor.AddRule(SupervisionRule{
 		Name:  "observer",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			return nil // observe only
 		},
 	})
@@ -160,7 +162,7 @@ func TestSupervisor_ObserveOnlyRule(t *testing.T) {
 	supervisor.Start("observer-test")
 	defer supervisor.Close()
 
-	bus.Publish(EffectEvent{KindLabel: "test"})
+	bus.Publish(trace.EffectEvent{KindLabel: "test"})
 
 	select {
 	case <-supervisor.Interventions():
@@ -172,10 +174,10 @@ func TestSupervisor_ObserveOnlyRule(t *testing.T) {
 
 func TestSupervisor_Inject(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	mgr.Create("sub:inject-target", nil)
 
 	supervisor := NewSupervisor(mgr, bus)
@@ -185,7 +187,7 @@ func TestSupervisor_Inject(t *testing.T) {
 	}
 
 	// Should be recorded in the trace
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:inject-target", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:inject-target", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -193,7 +195,7 @@ func TestSupervisor_Inject(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == SchemaSupervisorInject {
+		if rec.GetEnvelope().SchemaRef == scope.SchemaSupervisorInject {
 			found = true
 			break
 		}
@@ -205,11 +207,11 @@ func TestSupervisor_Inject(t *testing.T) {
 
 func TestSupervisor_Halt(t *testing.T) {
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
-	scope, _ := mgr.Create("sub:halt-target", nil)
+	mgr := scope.NewScopeManager(store)
+	target, _ := mgr.Create("sub:halt-target", nil)
 
 	supervisor := NewSupervisor(mgr, bus)
 	err := supervisor.Halt("scope:sub:halt-target")
@@ -217,13 +219,13 @@ func TestSupervisor_Halt(t *testing.T) {
 		t.Fatalf("halt failed: %v", err)
 	}
 
-	// Scope should be discarded
-	if scope.State() != ScopeDiscarded {
-		t.Errorf("expected scope discarded after halt, got %s", scope.State())
+	// the target scope should be discarded
+	if target.State() != scope.ScopeDiscarded {
+		t.Errorf("expected scope discarded after halt, got %s", target.State())
 	}
 
 	// Should be recorded in the trace
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:halt-target", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:halt-target", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -231,7 +233,7 @@ func TestSupervisor_Halt(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == SchemaSupervisorHalt {
+		if rec.GetEnvelope().SchemaRef == scope.SchemaSupervisorHalt {
 			found = true
 			break
 		}
@@ -243,7 +245,7 @@ func TestSupervisor_Halt(t *testing.T) {
 
 func TestSupervisor_ScopeNotFound(t *testing.T) {
 	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, nil)
 
 	err := supervisor.Inject("scope:nonexistent", "hello")
@@ -262,8 +264,8 @@ func TestSupervisor_ScopeNotFound(t *testing.T) {
 func TestDestructiveToolRule_BashRm(t *testing.T) {
 	rule := DestructiveToolRule()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "rm -rf /tmp/test"},
@@ -285,8 +287,8 @@ func TestDestructiveToolRule_BashRm(t *testing.T) {
 func TestDestructiveToolRule_BashSafe(t *testing.T) {
 	rule := DestructiveToolRule()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "ls -la"},
@@ -300,8 +302,8 @@ func TestDestructiveToolRule_BashSafe(t *testing.T) {
 func TestDestructiveToolRule_Write(t *testing.T) {
 	rule := DestructiveToolRule()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "write",
 		SchemaRef: "yaah.tool.write.v1",
 		Payload:   map[string]any{"path": "/tmp/test"},
@@ -315,8 +317,8 @@ func TestDestructiveToolRule_Write(t *testing.T) {
 func TestDestructiveToolRule_IgnoresCaptures(t *testing.T) {
 	rule := DestructiveToolRule()
 
-	event := EffectEvent{
-		Mode:      Capture,
+	event := trace.EffectEvent{
+		Mode:      trace.Capture,
 		KindLabel: "bash",
 		Payload:   map[string]any{"cmd": "rm -rf /"},
 	}
@@ -331,9 +333,9 @@ func TestHighErrorRateRule_Triggers(t *testing.T) {
 
 	// First: add 2 errors — not enough data yet (need windows/2 = 3)
 	for i := 0; i < 2; i++ {
-		event := EffectEvent{
+		event := trace.EffectEvent{
 			TraceOwnerID: "sub:error-prone",
-			Mode:         Capture,
+			Mode:         trace.Capture,
 			KindLabel:    "bash:result",
 			Payload:      map[string]any{"success": false},
 		}
@@ -345,9 +347,9 @@ func TestHighErrorRateRule_Triggers(t *testing.T) {
 	}
 
 	// 3rd error — triggers (3/3 = 100% >= 50%)
-	event := EffectEvent{
+	event := trace.EffectEvent{
 		TraceOwnerID: "sub:error-prone",
-		Mode:         Capture,
+		Mode:         trace.Capture,
 		KindLabel:    "bash:result",
 		Payload:      map[string]any{"success": false},
 	}
@@ -358,9 +360,9 @@ func TestHighErrorRateRule_Triggers(t *testing.T) {
 	}
 
 	// After trigger, results are reset. Next single error should not trigger.
-	event2 := EffectEvent{
+	event2 := trace.EffectEvent{
 		TraceOwnerID: "sub:error-prone",
-		Mode:         Capture,
+		Mode:         trace.Capture,
 		KindLabel:    "bash:result",
 		Payload:      map[string]any{"success": false},
 	}
@@ -373,9 +375,9 @@ func TestHighErrorRateRule_Triggers(t *testing.T) {
 func TestHighErrorRateRule_IgnoresDeclarations(t *testing.T) {
 	rule := HighErrorRateRule(0.5, 6)
 
-	event := EffectEvent{
+	event := trace.EffectEvent{
 		TraceOwnerID: "sub:test",
-		Mode:         Declaration,
+		Mode:         trace.Declaration,
 		KindLabel:    "bash",
 	}
 
@@ -389,9 +391,9 @@ func TestStuckDetectionRule_Triggers(t *testing.T) {
 
 	// Same call 3 times
 	for i := 0; i < 3; i++ {
-		event := EffectEvent{
+		event := trace.EffectEvent{
 			TraceOwnerID: "sub:stuck",
-			Mode:         Declaration,
+			Mode:         trace.Declaration,
 			KindLabel:    "bash",
 			Payload:      map[string]any{"cmd": "ls -la"},
 		}
@@ -411,12 +413,12 @@ func TestStuckDetectionRule_Triggers(t *testing.T) {
 func TestStuckDetectionRule_ResetsOnDifferentCall(t *testing.T) {
 	rule := StuckDetectionRule(3)
 
-	events := []EffectEvent{
-		{TraceOwnerID: "sub:reset", Mode: Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
-		{TraceOwnerID: "sub:reset", Mode: Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
-		{TraceOwnerID: "sub:reset", Mode: Declaration, KindLabel: "read_file", Payload: map[string]any{"path": "x"}}, // different
-		{TraceOwnerID: "sub:reset", Mode: Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
-		{TraceOwnerID: "sub:reset", Mode: Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
+	events := []trace.EffectEvent{
+		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
+		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
+		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "read_file", Payload: map[string]any{"path": "x"}}, // different
+		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
+		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
 	}
 
 	for i, event := range events {
@@ -431,9 +433,9 @@ func TestStuckDetectionRule_ResetsOnDifferentCall(t *testing.T) {
 func TestStuckDetectionRule_IgnoresCaptures(t *testing.T) {
 	rule := StuckDetectionRule(3)
 
-	event := EffectEvent{
+	event := trace.EffectEvent{
 		TraceOwnerID: "sub:test",
-		Mode:         Capture,
+		Mode:         trace.Capture,
 		KindLabel:    "bash",
 	}
 
@@ -446,23 +448,23 @@ func TestStuckDetectionRule_IgnoresCaptures(t *testing.T) {
 
 func TestSupervisor_CheckCall_Approved(t *testing.T) {
 	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, nil)
 
 	// Non-matching rule
 	supervisor.AddRule(SupervisionRule{
 		Name: "bash_only",
-		Match: func(e EffectEvent) bool {
+		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{Type: InterventionDeny, ScopeID: "x"}
 		},
 	})
 
 	// Event that doesn't match
-	iv := supervisor.CheckCall(EffectEvent{
-		Mode:      Declaration,
+	iv := supervisor.CheckCall(trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "read_file",
 	})
 	if iv != nil {
@@ -472,13 +474,13 @@ func TestSupervisor_CheckCall_Approved(t *testing.T) {
 
 func TestSupervisor_CheckCall_Deny(t *testing.T) {
 	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, nil)
 
 	supervisor.AddRule(DestructiveToolGuard())
 
-	iv := supervisor.CheckCall(EffectEvent{
-		Mode:      Declaration,
+	iv := supervisor.CheckCall(trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "rm -rf /tmp"},
@@ -493,25 +495,25 @@ func TestSupervisor_CheckCall_Deny(t *testing.T) {
 
 func TestSupervisor_CheckCall_FirstRuleWins(t *testing.T) {
 	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, nil)
 
 	supervisor.AddRule(SupervisionRule{
 		Name:  "first",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{Type: InterventionInject, ScopeID: "x"}
 		},
 	})
 	supervisor.AddRule(SupervisionRule{
 		Name:  "second",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			return &Intervention{Type: InterventionHalt, ScopeID: "x"}
 		},
 	})
 
-	iv := supervisor.CheckCall(EffectEvent{Mode: Declaration, KindLabel: "test"})
+	iv := supervisor.CheckCall(trace.EffectEvent{Mode: trace.Declaration, KindLabel: "test"})
 	if iv == nil {
 		t.Fatal("expected intervention")
 	}
@@ -522,18 +524,18 @@ func TestSupervisor_CheckCall_FirstRuleWins(t *testing.T) {
 
 func TestSupervisor_CheckCall_ObserveOnly(t *testing.T) {
 	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	mgr := scope.NewScopeManager(store)
 	supervisor := NewSupervisor(mgr, nil)
 
 	supervisor.AddRule(SupervisionRule{
 		Name:  "observer",
-		Match: func(e EffectEvent) bool { return true },
-		Action: func(e EffectEvent) *Intervention {
+		Match: func(e trace.EffectEvent) bool { return true },
+		Action: func(e trace.EffectEvent) *Intervention {
 			return nil // observe only
 		},
 	})
 
-	iv := supervisor.CheckCall(EffectEvent{Mode: Declaration})
+	iv := supervisor.CheckCall(trace.EffectEvent{Mode: trace.Declaration})
 	if iv != nil {
 		t.Error("observe-only rule should return nil")
 	}
@@ -542,8 +544,8 @@ func TestSupervisor_CheckCall_ObserveOnly(t *testing.T) {
 func TestDestructiveToolGuard_BashRm(t *testing.T) {
 	rule := DestructiveToolGuard()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "rm -rf /tmp/test"},
@@ -568,8 +570,8 @@ func TestDestructiveToolGuard_BashRm(t *testing.T) {
 func TestDestructiveToolGuard_BashDefaultDeny(t *testing.T) {
 	rule := DestructiveToolGuard()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "ls -la"},
@@ -586,8 +588,8 @@ func TestDestructiveToolGuard_BashDefaultDeny(t *testing.T) {
 func TestDestructiveToolGuard_BashBypassAttempt(t *testing.T) {
 	rule := DestructiveToolGuard()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
 		Payload:   map[string]any{"cmd": "rm${IFS}-rf /important"},
@@ -601,8 +603,8 @@ func TestDestructiveToolGuard_BashBypassAttempt(t *testing.T) {
 func TestDestructiveToolGuard_Write(t *testing.T) {
 	rule := DestructiveToolGuard()
 
-	event := EffectEvent{
-		Mode:      Declaration,
+	event := trace.EffectEvent{
+		Mode:      trace.Declaration,
 		KindLabel: "write",
 		SchemaRef: "yaah.tool.write.v1",
 		Payload:   map[string]any{"path": "/tmp/test"},
@@ -629,9 +631,9 @@ func TestHighErrorRateRule_MessageReportsSampledWindow(t *testing.T) {
 
 	var iv *Intervention
 	for i := 0; i < 3; i++ {
-		event := EffectEvent{
+		event := trace.EffectEvent{
 			TraceOwnerID: "sub:error-rate-message",
-			Mode:         Capture,
+			Mode:         trace.Capture,
 			KindLabel:    "bash:result",
 			Payload:      map[string]any{"success": false},
 		}
