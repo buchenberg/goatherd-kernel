@@ -65,14 +65,14 @@ type ExecutionVectorStep struct {
 
 // ExecutionVectorRun is a full run replay vector.
 type ExecutionVectorRun struct {
-	RunID       string                 `json:"run_id"`
-	ExecutionID string                 `json:"execution_id"`
-	FrontierID  string                 `json:"frontier_id"`
-	TaskRef     string                 `json:"task_ref"`
-	Inputs      map[string]any         `json:"inputs"`
-	Steps       []ExecutionVectorStep  `json:"steps"`
+	RunID       string                `json:"run_id"`
+	ExecutionID string                `json:"execution_id"`
+	FrontierID  string                `json:"frontier_id"`
+	TaskRef     string                `json:"task_ref"`
+	Inputs      map[string]any        `json:"inputs"`
+	Steps       []ExecutionVectorStep `json:"steps"`
 	OwnerPath   []ExecutionVectorFact `json:"owner_path"`
-	Cutoff      ExecutionVectorCutoff  `json:"cutoff"`
+	Cutoff      ExecutionVectorCutoff `json:"cutoff"`
 }
 
 // ExecutionVectorRelation is a relation replay vector.
@@ -90,7 +90,7 @@ type ExecutionVectorRelation struct {
 	ChildTaskRef        string         `json:"child_task_ref"`
 	ChildInputs         map[string]any `json:"child_inputs"`
 	ChildCompleteIntent string         `json:"child_complete_intent"`
-	ChildOutputs        map[string]any  `json:"child_outputs"`
+	ChildOutputs        map[string]any `json:"child_outputs"`
 	RelationFactID      string         `json:"relation_fact_id"`
 }
 
@@ -106,26 +106,26 @@ type HistoryVectorChild struct {
 
 // ExecutionVectorHistory is the effective-history projection vector.
 type ExecutionVectorHistory struct {
-	RunID           string                 `json:"run_id"`
-	ExecutionID     string                 `json:"execution_id"`
-	FrontierID      string                 `json:"frontier_id"`
-	TaskRefs        map[string]string      `json:"task_refs"`
-	ParentOwnerPath []ExecutionVectorFact  `json:"parent_owner_path"`
-	RootStatus      string                 `json:"root_status"`
-	RootTaskRef     string                 `json:"root_task_ref"`
-	Children        []HistoryVectorChild   `json:"children"`
-	Published       []string               `json:"published"`
+	RunID           string                `json:"run_id"`
+	ExecutionID     string                `json:"execution_id"`
+	FrontierID      string                `json:"frontier_id"`
+	TaskRefs        map[string]string     `json:"task_refs"`
+	ParentOwnerPath []ExecutionVectorFact `json:"parent_owner_path"`
+	RootStatus      string                `json:"root_status"`
+	RootTaskRef     string                `json:"root_task_ref"`
+	Children        []HistoryVectorChild  `json:"children"`
+	Published       []string              `json:"published"`
 }
 
 // ExecutionVectorDoc is the whole execution vectors fixture.
 type ExecutionVectorDoc struct {
-	Generator        string                   `json:"generator"`
-	SourceRepo       string                   `json:"source_repo"`
-	SourceCommit     string                   `json:"source_commit"`
-	PythonVersion    string                   `json:"python_version"`
+	Generator        string                  `json:"generator"`
+	SourceRepo       string                  `json:"source_repo"`
+	SourceCommit     string                  `json:"source_commit"`
+	PythonVersion    string                  `json:"python_version"`
 	ExecutionIDs     []ExecutionIDVector     `json:"execution_ids"`
 	RelationIDs      []RelationIDVector      `json:"relation_ids"`
-	PublishedFact    PublishedFactVector      `json:"published_fact"`
+	PublishedFact    PublishedFactVector     `json:"published_fact"`
 	RunSequence      ExecutionVectorRun      `json:"run_sequence"`
 	FailSequence     ExecutionVectorRun      `json:"fail_sequence"`
 	RelationSequence ExecutionVectorRelation `json:"relation_sequence"`

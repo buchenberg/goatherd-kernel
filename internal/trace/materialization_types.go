@@ -35,7 +35,7 @@ const (
 type MaterializationResult struct {
 	Outcome          MaterializationOutcome
 	CaptureDrafts    []RecordDraft
-	FailureReason     string
+	FailureReason    string
 	WorldSideAnchors []map[string]any
 }
 
