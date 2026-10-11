@@ -4,6 +4,18 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+### Changed
+- **`sandbox/containerd` no longer commits a `replace` to the in-repo
+  core**: the Phase-4 release-verify gate rejects replace directives in
+  tagged trees — the published nested `v0.1.0` was unbuildable for exactly
+  this reason — and every tag since `v0.2.0` failed that job. The adapter
+  resolves and tests against the core version its `go.mod` pins
+  (`v0.11.0`), which the gate's clean-consumer check proves consumable; the
+  release train's repin keeps it shipping against the core it was tested
+  with. Ships in the next nested release.
+
 ## [v0.12.0] - 2026-10-11
 
 ### Added
