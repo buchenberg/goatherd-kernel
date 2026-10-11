@@ -4,9 +4,61 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.14.0] - 2026-10-11
+
+Plan 06 (`docs/06-settlement-recovery-upstream.md`): settlement works over
+dirty baselines, and an isolated child's substrate is re-adoptable from the
+kernel's own trace record. Three phases, no settlement-code change — the
+fixes live in the git backend's state shape and the recovery record.
+
+### Changed (breaking)
+- **`RecoverOptions.Resolver` gains a `path` parameter**:
+  `func(scopeID, backend, path string) (Sandbox, error)`. The fork record
+  now carries the isolated child's sandbox address (see `Addressed`
+  below), and recovery hands it to the resolver — empty for roots and
+  unaddressed backends. Shared children keep inheriting the parent's
+  re-adopted sandbox with no resolver call, as before. A recorded
+  non-absolute address fails recovery loudly before the resolver runs.
+  The sole consumer (yaah) re-pins in the same window.
 
 ### Added
+- **The git backend's workspace state is a content identity (plan 06
+  U1a/U1b).** `Capture` records `{head_sha, tree_sha}` — the scratch
+  index's tree via `git write-tree` — instead of a timestamped stash
+  commit minted per capture, so captures of identical content at an
+  unchanged timeline position digest equal and `Settle(Select)`'s
+  precondition is a true content check. `Diff` bases on the captured
+  full state (`tree_sha`; `Revision` as the legacy fallback), so a dirty
+  baseline's own uncommitted content appears on neither side of a fork's
+  diffs. `Apply` restores the captured tree exactly — including
+  deletions — via `git read-tree --reset -u`. The digest-stability
+  contract is documented on `Sandbox.Capture`; the containerd backend's
+  sequence-keyed captures are the known violation, recorded as a
+  follow-up gap.
+- **`Settle(Apply)`'s delta is baseline-relative (plan 06 U1c).** `Seal`
+  annotates the sealed state with `base_tree_sha` at seal time —
+  resolved while the baseline's objects are certainly reachable, legacy
+  stash baselines through the minted commit's tree, legacy clean
+  baselines through HEAD's tree — and pins both trees with refs under
+  `refs/shepherd/states/<sha>` so an explicit `git gc` between Seal and
+  Settle cannot reclaim them. `ApplyDelta` merges base = baseline tree,
+  theirs = the delta's tree, ours = the worktree (`git merge-tree
+  --write-tree --merge-base`), landing through a scratch index so the
+  caller's real index is untouched and removals land. Malformed delta
+  shapes (no recognizable key; `tree_sha` without `base_tree_sha`)
+  error instead of silently no-oping; legacy `stash_sha` deltas keep the
+  stash-apply path, and a legacy clean capture (`stash_sha` present but
+  empty) stays a legitimate no-op.
+- **`Addressed` optional capability (plan 06 U2).** A backend's durable
+  workspace address as a normalized absolute path, resolved eagerly at
+  construction — the worktree path for a git worktree (relative paths
+  resolve against the repository, the way `git worktree add` resolves
+  them), the repository path otherwise. `forkScope` records it in the
+  fork payload as `sandbox_path` beside `sandbox_backend`; shared forks
+  record none. A backend whose identity is not a path must not
+  implement the interface yet — recovery's absolute-path validation
+  could not carry it.
+
 - **The kernel law map is complete**: law 21's projection half and law 23
   are pinned as named tests in `trace/laws_test.go`
   (`TestLawCutSliceProjectionLaws`,
@@ -25,6 +77,24 @@ contain breaking changes, which are called out below.
   historical gap/dev plans — are archived under `docs/history/` with their
   ticks frozen, and the living plan (the v1.0 gate, the backlog, the
   release procedure) is `docs/DEVELOPMENT.md`.
+
+### Fixed
+- A settled apply verb's content physically lands in the parent worktree
+  — the pre-plan-06 `ApplyDelta` silently no-oped on states it could
+  not read — and a capture that held a deletion restores as a deletion,
+  not a superset.
+- Sealed outputs over dirty baselines freeze only the branch's changes;
+  select over an unmoved dirty parent is deterministic (the
+  same-second luck class is dead); overlapping drift still refuses
+  typed `ErrApplyConflict` and consumes nothing.
+
+### Migration notes
+- Traces recorded before this release keep working: legacy
+  `stash_sha`-carrying states apply through the stash path, and a
+  legacy dirty baseline whose minted stash has been pruned fails Seal
+  with an actionable error (such a fork can no longer settle).
+- Settlement law tests over dirty baselines are pinned in
+  `settlement_test.go`; recovery address tests in `recovery_test.go`.
 
 ## [v0.13.0] - 2026-10-11
 
