@@ -4,7 +4,7 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.12.0] - 2026-10-11
 
 ### Added
 - **`traceui` — a read-only HTTP projection of a trace store** (the
@@ -19,6 +19,34 @@ contain breaking changes, which are called out below.
   creation; the existing schema is verified, and a wrong path fails loudly).
   The browser client lives in a separate repository and consumes this
   contract.
+
+### Fixed
+- **Effect bus events carry the persisted kind label**: an appended draft
+  with an empty `KindLabel` now publishes the schema-ref default the store
+  retained (the same one `prepareAppend` persists), so SSE consumers see the
+  same `kind_label` that `/api/records` serves.
+
+### Nested module
+
+`sandbox/containerd` v0.2.1 shipped ahead of this release with the
+unprivileged-spec fix (PR #40); see its section below. The adapter keeps
+requiring core `v0.11.0` — v0.12.0 is additive, so no nested repin release
+is needed.
+
+## [sandbox/containerd/v0.2.1] - 2026-10-11
+
+Unprivileged clients can start sandboxes. `StartTask` no longer uses
+`oci.WithImageConfig`, which resolved the image user by reading
+`/etc/passwd` out of the unpacked rootfs in the client process — containerd
+2.3+ opens the overlay snapshot directories directly, and the daemon
+creates every one `0700 root:root`, so any client outside root failed with
+EACCES before this. The init spec is now built from the image config blob
+read through the daemon's content store, which socket access already
+authorizes: image `Env` and `WorkingDir` are applied, and a numeric
+`uid[:gid]` image user is set directly. Named image users are deliberately
+not resolved — that lookup is exactly the rootfs read this removes, and
+the sandbox contract's execs define their own credentials. Tagged at the
+PR #40 merge.
 
 ## [v0.11.0] - 2026-10-10
 
