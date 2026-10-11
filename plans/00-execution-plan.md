@@ -581,14 +581,18 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
 
 ## 13. v1.0 readiness checklist (gate after M5)
 
-- [x] All plans 01–05 acceptance criteria checked; law-coverage map
-      complete. *(Evidence: the parity plan closed at v0.9.0 —
-      `docs/v090-tagged`; `docs/law-coverage.md` maps all 25 laws.)*
+- [ ] All plans 01–05 acceptance criteria checked; law-coverage map
+      complete. *(Mostly done: the parity plan closed at v0.9.0 — see the
+      CHANGELOG's v0.9.0 section and §0's reconciliation — and
+      `docs/law-coverage.md` maps all 25 laws. Not complete: law 21's
+      projection half and law 23 remain open plan-02 dependencies
+      (`docs/law-coverage.md`), re-evaluated when the projection-
+      compatibility API lands.)*
 - [x] Golden/store/schema vectors green in CI against current upstream tag;
       upstream shepherd2 version recorded in go-adjacent
       `testdata/UPSTREAM.md`. *(Evidence: the `golden drift (vs pinned
       Python reference)` job is green on every push; the pin
-      `shepherd2@d34d5ca3` and its provenance are recorded in
+      `shepherd2@d34d5ca3` and its per-file provenance are recorded in
       `testdata/UPSTREAM.md` and `golden_provenance_test.go`.)*
 - [ ] Live containerd verification recorded; nested module consumable.
       *(The nested module is consumable — `sandbox/containerd/v0.2.2`
