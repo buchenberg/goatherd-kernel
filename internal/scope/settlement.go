@@ -16,7 +16,7 @@ import (
 // such, not pretending to be shepherd2.run_output.v1.
 const (
 	// SchemaRunOutputSealed is recorded on the sealing scope's owner path
-	// when an output is sealed. Declaration:: the sealing is stated intent
+	// when an output is sealed. Declaration: the sealing is stated intent
 	// that the settlement records then observe.
 	SchemaRunOutputSealed = "shepherd.run_output.sealed.v1"
 	// SchemaRunOutputSettled is recorded on the same owner path when the
