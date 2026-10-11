@@ -4,14 +4,13 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.13.0] - 2026-10-11
 
-### Added
-- **`sandbox/containerd` carries its own `LICENSE`** (MIT, same as the
-  core): the module publishes separately, and a proxy consumer sees only
-  the module directory, so the root license alone left the adapter
-  unlicensed from its consumers' point of view. Ships with the next nested
-  release.
+The pre-freeze packaging release: both §13 packaging decisions land as a
+pair of import-path breaks, so the v1 API freeze starts from a layout
+where every component owns its namespace. No behavior changes —
+digests, vectors, and laws unchanged; the moves are mechanical, and the
+test suites moved with their packages.
 
 ### Changed (breaking)
 - **The task runtime and the supervision rules engine moved out of the root
@@ -41,6 +40,19 @@ contain breaking changes, which are called out below.
   and the backend lives beside `sandbox/containerd` as a sibling. No
   nested module: git has zero external dependencies and is the kernel's
   own test carrier.
+
+### Nested module
+
+`sandbox/containerd` v0.2.3 ships in the same train, license-only —
+see its section below.
+
+## [sandbox/containerd/v0.2.3] - 2026-10-11
+
+The adapter carries its own MIT `LICENSE` under its module path, added
+in `3c7c632` — the root LICENSE alone left it unlicensed from a proxy
+consumer's point of view, which sees only the module directory. No code
+changes; the adapter still requires core `v0.12.0` (v0.13.0 is additive
+to it from the adapter's point of view). Tagged at that commit.
 
 ## [v0.12.0] - 2026-10-11
 
