@@ -307,9 +307,10 @@ func stateFor(action SettlementAction) (OutputState, error) {
 //
 //   - selected: the parent's workspace must be bit-identical to the fork
 //     baseline (fast-forward-only, strictly). The sealed state is applied
-//     onto the parent and the child is causally merged. A parent that moved
-//     — or never had a clean tree at the fork point — gets an actionable
-//     error pointing at apply.
+//     onto the parent and the child is causally merged. A parent that
+//     moved since the fork — even one whose content is identical but
+//     whose timeline advanced — gets an actionable error pointing at
+//     apply.
 //   - applied: three-way. The parent's changes since the baseline must be
 //     path-disjoint from the output's changes; the sealed delta is then
 //     merged onto the parent's current workspace (sandbox.DeltaApplier). A path
@@ -385,11 +386,14 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			return err
 		}
 		// Fast-forward-only, strictly: the parent's workspace must be
-		// bit-identical to the fork baseline. Digest equality is the honest
-		// test — a parent with uncommitted content at the fork point has a
-		// capture that can never digest-match (git's stash create mints a
-		// fresh commit per capture), so it is told to use apply rather than
-		// silently losing that content to ApplyWorkspace's reset.
+		// bit-identical to the fork baseline, content and timeline.
+		// Digest equality is the honest test: since plan 06's content
+		// identity a parent with uncommitted content at the fork point
+		// digests equal too, so select works over dirty baselines
+		// deterministically. A parent whose timeline moved (a commit,
+		// even with identical content) still refuses — applying the
+		// sealed state resets to the child's HEAD and would discard
+		// the parent's commit — so it is told to use apply.
 		parentNow, err := parentSb.Capture(ctx)
 		if err != nil {
 			return fmt.Errorf("settle %s (select): capture parent: %w", out.id, err)
