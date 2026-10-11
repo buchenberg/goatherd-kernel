@@ -1,10 +1,15 @@
-package sandbox
+// Package git is the core module's git sandbox backend: the in-place
+// materializer over the caller's repository and the detached-worktree
+// isolated mode, both addressable through the sandbox package's registry
+// as "git" (the backend self-registers on import). The Sandbox contract,
+// the capability model, and OpenSandbox live in the parent sandbox
+// package; this package owns git state only.
+package git
 
 import (
 	"bytes"
 	"context"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -12,6 +17,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	sbx "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // gitTimeout bounds each git subprocess. A hung git process (e.g. waiting on a
@@ -189,15 +197,15 @@ func (g *gitRunner) isRepo(ctx context.Context) bool {
 // worktrees share the object store, so a stash commit created in a worktree can
 // be applied in the main tree of the same repository.
 //
-// Exec, ReadFile, and WriteFile return ErrUnsupported. Agent processes are the
+// Exec, ReadFile, and WriteFile return sbx.ErrUnsupported. Agent processes are the
 // caller's concern; this backend owns git state only.
 type GitSandbox struct {
 	repoPath     string
 	worktreePath string
 }
 
-var _ Sandbox = (*GitSandbox)(nil)
-var _ DeltaApplier = (*GitSandbox)(nil)
+var _ sbx.Sandbox = (*GitSandbox)(nil)
+var _ sbx.DeltaApplier = (*GitSandbox)(nil)
 
 // NewLocalGitSandbox returns an in-place sandbox over repoPath.
 func NewLocalGitSandbox(repoPath string) *GitSandbox {
@@ -232,9 +240,9 @@ func (g *GitSandbox) repo() *gitRunner { return &gitRunner{dir: g.repoPath} }
 func (g *GitSandbox) work() *gitRunner { return &gitRunner{dir: g.workDir()} }
 
 // Capabilities reports the git backend's support matrix.
-func (g *GitSandbox) Capabilities() SandboxCapabilities {
+func (g *GitSandbox) Capabilities() sbx.SandboxCapabilities {
 	if g.isWorktree() {
-		return SandboxCapabilities{
+		return sbx.SandboxCapabilities{
 			Lifecycle:   true,
 			Exec:        false,
 			FileIO:      false,
@@ -243,7 +251,7 @@ func (g *GitSandbox) Capabilities() SandboxCapabilities {
 			Containment: trace.ContainBuffered,
 		}
 	}
-	return SandboxCapabilities{
+	return sbx.SandboxCapabilities{
 		Lifecycle:   false,
 		Exec:        false,
 		FileIO:      false,
@@ -258,7 +266,7 @@ func (g *GitSandbox) Capabilities() SandboxCapabilities {
 // The worktree is created detached (`--detach`) so sibling variants cannot
 // contend over a branch. Stale administrative entries from a previous crash are
 // pruned first, which is a no-op when there is nothing to prune.
-func (g *GitSandbox) Create(ctx context.Context, spec SandboxSpec) error {
+func (g *GitSandbox) Create(ctx context.Context, spec sbx.SandboxSpec) error {
 	repo := g.repo()
 	if !repo.isRepo(ctx) {
 		return fmt.Errorf("git sandbox: %s is not a git repository", g.repoPath)
@@ -467,8 +475,8 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 }
 
 // Exec is not implemented: the git backend owns git state, not processes.
-func (g *GitSandbox) Exec(context.Context, ExecRequest) (ExecResult, error) {
-	return ExecResult{}, ErrUnsupported
+func (g *GitSandbox) Exec(context.Context, sbx.ExecRequest) (sbx.ExecResult, error) {
+	return sbx.ExecResult{}, sbx.ErrUnsupported
 }
 
 // ApplyDelta merges a captured state's changes onto the current workspace
@@ -503,12 +511,12 @@ func (g *GitSandbox) ApplyDelta(ctx context.Context, delta trace.WorkspaceState)
 
 // ReadFile is not implemented.
 func (g *GitSandbox) ReadFile(context.Context, string) ([]byte, error) {
-	return nil, ErrUnsupported
+	return nil, sbx.ErrUnsupported
 }
 
 // WriteFile is not implemented.
 func (g *GitSandbox) WriteFile(context.Context, string, []byte, fs.FileMode) error {
-	return ErrUnsupported
+	return sbx.ErrUnsupported
 }
 
 // --- OpenSandbox registration ---
@@ -523,7 +531,7 @@ type GitSandboxConfig struct {
 }
 
 func init() {
-	RegisterSandbox("git", func(cfg any) (Sandbox, error) {
+	sbx.RegisterSandbox("git", func(cfg any) (sbx.Sandbox, error) {
 		c, ok := cfg.(GitSandboxConfig)
 		if !ok {
 			if cfg == nil {

@@ -1,10 +1,11 @@
 // Package sandbox is the execution boundary of the kernel: the Sandbox
-// interface a scope's workspace operations run against, the in-place and
-// worktree git backends built into the core module, and the fail-closed
+// interface a scope's workspace operations run against, and the fail-closed
 // backend registry behind OpenSandbox. Backends report their capabilities
 // honestly - unsupported operations return ErrUnsupported rather than
-// pretending - and Capture/Diff never mutate the caller's index. The
-// containerd backend ships as the nested module sandbox/containerd.
+// pretending - and Capture/Diff never mutate the caller's index. The git
+// backend (in-place and detached-worktree modes) ships as the subpackage
+// sandbox/git in the core module; the containerd backend ships as the
+// nested module sandbox/containerd.
 package sandbox
 
 import (
@@ -280,7 +281,7 @@ func (r *sandboxRegistry) backendsLocked() []string {
 var defaultSandboxRegistry = &sandboxRegistry{factories: map[string]SandboxFactory{}}
 
 // RegisterSandbox registers a backend for OpenSandbox. Intended for
-// init()-time self-registration (the built-in git backend) and host wiring
+// init()-time self-registration (the sandbox/git backend) and host wiring
 // (importing a backend module and registering it under its Backend() name).
 func RegisterSandbox(backend string, f SandboxFactory) {
 	defaultSandboxRegistry.register(backend, f)

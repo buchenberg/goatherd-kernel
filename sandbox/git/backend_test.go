@@ -1,14 +1,16 @@
-package sandbox
+package git
 
 import (
 	"context"
-	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	sbx "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // samePath reports whether two paths refer to the same location, resolving
@@ -115,24 +117,24 @@ func TestGitSandbox_UnsupportedMethods(t *testing.T) {
 	sb := NewLocalGitSandbox(repo)
 	ctx := context.Background()
 
-	if _, err := sb.Exec(ctx, ExecRequest{Command: "true"}); err != ErrUnsupported {
-		t.Errorf("Exec err = %v, want ErrUnsupported", err)
+	if _, err := sb.Exec(ctx, sbx.ExecRequest{Command: "true"}); err != sbx.ErrUnsupported {
+		t.Errorf("Exec err = %v, want sbx.ErrUnsupported", err)
 	}
-	if _, err := sb.ReadFile(ctx, "README.md"); err != ErrUnsupported {
-		t.Errorf("ReadFile err = %v, want ErrUnsupported", err)
+	if _, err := sb.ReadFile(ctx, "README.md"); err != sbx.ErrUnsupported {
+		t.Errorf("ReadFile err = %v, want sbx.ErrUnsupported", err)
 	}
-	if err := sb.WriteFile(ctx, "x", nil, 0o644); err != ErrUnsupported {
-		t.Errorf("WriteFile err = %v, want ErrUnsupported", err)
+	if err := sb.WriteFile(ctx, "x", nil, 0o644); err != sbx.ErrUnsupported {
+		t.Errorf("WriteFile err = %v, want sbx.ErrUnsupported", err)
 	}
 }
 
 func TestGitSandbox_InPlaceCreateValidatesRepo(t *testing.T) {
 	ctx := context.Background()
 
-	if err := NewLocalGitSandbox(t.TempDir()).Create(ctx, SandboxSpec{}); err == nil {
+	if err := NewLocalGitSandbox(t.TempDir()).Create(ctx, sbx.SandboxSpec{}); err == nil {
 		t.Error("Create on a non-repository should fail")
 	}
-	if err := NewLocalGitSandbox(newTestRepo(t)).Create(ctx, SandboxSpec{}); err != nil {
+	if err := NewLocalGitSandbox(newTestRepo(t)).Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Errorf("Create on a repository should succeed: %v", err)
 	}
 }
@@ -157,7 +159,7 @@ func TestWorktreeSandbox_CreateAndDestroy(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 
 	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(ctx, SandboxSpec{}); err != nil {
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if !fileExists(t, wtPath, "README.md") {
@@ -187,7 +189,7 @@ func TestWorktreeSandbox_CreateRefusesNonEmptyPath(t *testing.T) {
 	gittest.WriteFile(t, wtPath, "occupied.txt", "do not clobber")
 
 	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(context.Background(), SandboxSpec{}); err == nil {
+	if err := sb.Create(context.Background(), sbx.SandboxSpec{}); err == nil {
 		t.Error("Create must refuse a non-empty worktree path")
 	}
 }
@@ -198,7 +200,7 @@ func TestWorktreeSandbox_RecoversFromStaleEntry(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 
 	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(ctx, SandboxSpec{}); err != nil {
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -214,7 +216,7 @@ func TestWorktreeSandbox_RecoversFromStaleEntry(t *testing.T) {
 	}
 
 	// And the same path must be reusable.
-	if err := sb.Create(ctx, SandboxSpec{}); err != nil {
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("Create after recovery: %v", err)
 	}
 	t.Cleanup(func() { _ = sb.Destroy(context.Background()) })
@@ -243,7 +245,7 @@ func TestWorktreeSandbox_ApplySeedsForkState(t *testing.T) {
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	wt := NewWorktreeSandbox(repo, wtPath)
-	if err := wt.Create(ctx, SandboxSpec{}); err != nil {
+	if err := wt.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree Create: %v", err)
 	}
 	t.Cleanup(func() { _ = wt.Destroy(context.Background()) })
@@ -267,11 +269,11 @@ func TestWorktreeSandbox_SiblingsAreIndependent(t *testing.T) {
 	root := t.TempDir()
 	wtA := NewWorktreeSandbox(repo, filepath.Join(root, "a"))
 	wtB := NewWorktreeSandbox(repo, filepath.Join(root, "b"))
-	if err := wtA.Create(ctx, SandboxSpec{}); err != nil {
+	if err := wtA.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("create A: %v", err)
 	}
 	t.Cleanup(func() { _ = wtA.Destroy(context.Background()) })
-	if err := wtB.Create(ctx, SandboxSpec{}); err != nil {
+	if err := wtB.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("create B: %v", err)
 	}
 	t.Cleanup(func() { _ = wtB.Destroy(context.Background()) })
@@ -306,7 +308,7 @@ func TestWorktreeSandbox_CaptureAppliesToMainTree(t *testing.T) {
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
 	wt := NewWorktreeSandbox(repo, wtPath)
-	if err := wt.Create(ctx, SandboxSpec{}); err != nil {
+	if err := wt.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree Create: %v", err)
 	}
 
@@ -339,7 +341,7 @@ func TestWorktreeSandbox_CaptureAppliesToMainTree(t *testing.T) {
 func TestWorktreeSandbox_CreateAtRepoPathRejected(t *testing.T) {
 	repo := newTestRepo(t)
 	sb := NewWorktreeSandbox(repo, repo)
-	if err := sb.Create(context.Background(), SandboxSpec{}); err == nil {
+	if err := sb.Create(context.Background(), sbx.SandboxSpec{}); err == nil {
 		t.Error("Create must reject a worktree path equal to the repository path")
 	}
 }
@@ -352,7 +354,7 @@ func TestWorktreeSandbox_DestroyRetriesOnBusyDirectory(t *testing.T) {
 	wtPath := filepath.Join(t.TempDir(), "wt")
 
 	sb := NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(ctx, SandboxSpec{}); err != nil {
+	if err := sb.Create(ctx, sbx.SandboxSpec{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -135,7 +136,7 @@ func TestFork_RecordsBaselineDigest(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, err := mgr.Create("gate:base-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("gate:base-parent", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestFork_RecordsBaselineDigest(t *testing.T) {
 func forkWorktreeChild(t *testing.T, mgr *ScopeManager, parentID, childOwner, repo, leaf string) (*Scope, string) {
 	t.Helper()
 	wtPath := filepath.Join(t.TempDir(), leaf)
-	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	sb := git.NewWorktreeSandbox(repo, wtPath)
 	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create for %s: %v", childOwner, err)
 	}
@@ -210,7 +211,7 @@ func TestProposeMerge_ClassifiesChildChanges(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:prop-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:prop-parent", git.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "gate:prop-child", repo, "wt")
 
@@ -266,7 +267,7 @@ func TestCommitMerge_DenyingReviewer(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("gate:deny-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:deny-parent", git.NewLocalGitSandbox(repo))
 
 	cp, err := mgr.CreateCheckpoint(ctx, parent.ID(), nil)
 	if err != nil {
@@ -334,7 +335,7 @@ func TestCommitMerge_ApprovingReviewer(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, _ := mgr.Create("gate:ok-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:ok-parent", git.NewLocalGitSandbox(repo))
 
 	child, err := mgr.Fork(parent.ID(), "gate:ok-child", nil)
 	if err != nil {
@@ -376,7 +377,7 @@ func TestCommitMerge_IsolatedChildRefused(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:iso-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:iso-parent", git.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "gate:iso-child", repo, "wt")
 	if err := os.WriteFile(filepath.Join(wtPath, "feature.txt"), []byte("x"), 0o644); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 // The scope does not own the sandbox, so lifecycle operations never touch the
 // caller's repository.
 func gitScope(store *trace.SQLiteTraceStore, owner, repo string) *Scope {
-	return NewScope(store, owner).WithSandbox(sandbox.NewLocalGitSandbox(repo), false)
+	return NewScope(store, owner).WithSandbox(git.NewLocalGitSandbox(repo), false)
 }
 
 // stashOf extracts the stash SHA from a checkpoint's backend-neutral workspace
