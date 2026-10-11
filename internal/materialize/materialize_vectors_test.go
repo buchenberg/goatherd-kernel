@@ -1,4 +1,4 @@
-package shepherd
+package materialize
 
 // Cross-language materialize vectors (T2b.5, plan 03 §4): replay the
 // sequences recorded through the Python reference and require identical
@@ -16,6 +16,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	substrate "github.com/buchenberg/shepherd-kernel-go/internal/substrate"
+	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -117,7 +119,7 @@ type materializeReplayVector struct {
 
 func loadMaterializeVectors(t *testing.T) materializeVectorDoc {
 	t.Helper()
-	data, err := os.ReadFile("testdata/materialize_vectors_v0.json")
+	data, err := os.ReadFile("../../testdata/materialize_vectors_v0.json")
 	if err != nil {
 		t.Fatalf("read materialize vectors: %v", err)
 	}
@@ -170,9 +172,9 @@ func TestMaterializeRequestDigestMatchesPython(t *testing.T) {
 		if v.Request.CaptureTraceOwnerID != nil {
 			req.CaptureTraceOwnerID = *v.Request.CaptureTraceOwnerID
 		}
-		ctx := OperationContext{
+		ctx := trace.OperationContext{
 			ActorRef:               v.Request.ActorRef,
-			Operation:              OpMaterialize,
+			Operation:              trace.OpMaterialize,
 			PresentedAuthorityRefs: v.Request.AuthorityRefs,
 			SchemaEnvironmentRef:   v.Request.SchemaEnvironmentRef,
 		}
@@ -197,8 +199,8 @@ func TestMaterializeEchoSequenceMatchesPython(t *testing.T) {
 	doc := loadMaterializeVectors(t)
 	seq := doc.EchoSequence
 	store := newMemStore(t)
-	registry := NewSubstrateRegistry()
-	if err := registry.Register(NewEchoSubstrate(seq.Declaration.SubstrateRef, seq.Declaration.Drafts[0].SchemaRef)); err != nil {
+	registry := substrate.NewSubstrateRegistry()
+	if err := registry.Register(substrate.NewEchoSubstrate(seq.Declaration.SubstrateRef, seq.Declaration.Drafts[0].SchemaRef)); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
@@ -225,12 +227,12 @@ func TestMaterializeKVSequenceMatchesPython(t *testing.T) {
 	doc := loadMaterializeVectors(t)
 	seq := doc.KVSequence
 	store := newMemStore(t)
-	kv, err := NewKVSubstrate(filepath.Join(t.TempDir(), "world.sqlite"))
+	kv, err := substrate.NewKVSubstrate(filepath.Join(t.TempDir(), "world.sqlite"))
 	if err != nil {
-		t.Fatalf("NewKVSubstrate: %v", err)
+		t.Fatalf("substrate.NewKVSubstrate: %v", err)
 	}
 	defer kv.Close()
-	registry := NewSubstrateRegistry()
+	registry := substrate.NewSubstrateRegistry()
 	if err := registry.Register(kv); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -267,26 +269,26 @@ func TestMaterializeLedgerReplayAcrossRestartMatchesPython(t *testing.T) {
 	seq := doc.ReplaySequence
 
 	dbPath := filepath.Join(t.TempDir(), "trace.sqlite")
-	substrate := &vectorCountingSubstrate{}
-	registry := NewSubstrateRegistry()
-	if err := registry.Register(substrate); err != nil {
+	sub := &vectorCountingSubstrate{}
+	registry := substrate.NewSubstrateRegistry()
+	if err := registry.Register(sub); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
-	store, err := NewSQLiteTraceStore(dbPath)
+	store, err := trace.NewSQLiteTraceStore(dbPath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	declaration, err := store.Append(context.Background(), vectorAppendContext(), AppendBatch{
+	declaration, err := store.Append(context.Background(), vectorAppendContext(), trace.AppendBatch{
 		AppendIntentID: "vector:replay:declare",
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: "owner:vector-replay",
-			RetainedContext: &RetainedContext{
+			RetainedContext: &trace.RetainedContext{
 				SubstrateRef: "vector.count.v1",
-				Containment:  ContainContained,
+				Containment:  trace.ContainContained,
 			},
-			FactDrafts: []RecordDraft{{
-				Mode:      Declaration,
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
 				SchemaRef: "vector.write.v1",
 				KindLabel: "write",
 				Payload:   map[string]any{"value": jsonNumber(t, 1)},
@@ -312,7 +314,7 @@ func TestMaterializeLedgerReplayAcrossRestartMatchesPython(t *testing.T) {
 	}
 	store.Close(context.Background())
 
-	restarted, err := NewSQLiteTraceStore(dbPath)
+	restarted, err := trace.NewSQLiteTraceStore(dbPath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
@@ -324,8 +326,8 @@ func TestMaterializeLedgerReplayAcrossRestartMatchesPython(t *testing.T) {
 
 	assertReceiptEquals(t, first, seq.FirstReceipt)
 	assertReceiptEquals(t, second, seq.SecondReceipt)
-	if substrate.calls != seq.SubstrateCalls {
-		t.Errorf("substrate calls = %d, want %d", substrate.calls, seq.SubstrateCalls)
+	if sub.calls != seq.SubstrateCalls {
+		t.Errorf("sub calls = %d, want %d", sub.calls, seq.SubstrateCalls)
 	}
 }
 
@@ -343,14 +345,14 @@ func (c *vectorCountingSubstrate) DeclarationSchemas() []string { return []strin
 func (c *vectorCountingSubstrate) CaptureSchemas() []string {
 	return []string{"vector.write.applied.v1"}
 }
-func (c *vectorCountingSubstrate) Containment() Containment { return ContainContained }
+func (c *vectorCountingSubstrate) Containment() trace.Containment { return trace.ContainContained }
 
-func (c *vectorCountingSubstrate) Materialize(_ context.Context, records []Record) (MaterializationResult, error) {
+func (c *vectorCountingSubstrate) Materialize(_ context.Context, records []trace.Record) (trace.MaterializationResult, error) {
 	c.calls++
-	return MaterializationResult{
-		Outcome: MaterializationSuccess,
-		CaptureDrafts: []RecordDraft{{
-			Mode:            Capture,
+	return trace.MaterializationResult{
+		Outcome: trace.MaterializationSuccess,
+		CaptureDrafts: []trace.RecordDraft{{
+			Mode:            trace.Capture,
 			SchemaRef:       "vector.write.applied.v1",
 			KindLabel:       "write_applied",
 			Payload:         map[string]any{"call": c.calls},
@@ -360,8 +362,8 @@ func (c *vectorCountingSubstrate) Materialize(_ context.Context, records []Recor
 }
 
 // vectorAppendContext mirrors the generator's APPEND context.
-func vectorAppendContext() AppendContext {
-	return AppendContext{
+func vectorAppendContext() trace.AppendContext {
+	return trace.AppendContext{
 		ActorRef:             "runtime:vector",
 		PresentedWitnessRefs: []string{"trusted:internal"},
 		SchemaVersionSet:     "shepherd2-slice-a",
@@ -370,27 +372,27 @@ func vectorAppendContext() AppendContext {
 }
 
 // vectorMaterializeContext mirrors the generator's MATERIALIZE context.
-func vectorMaterializeContext() OperationContext {
-	return vectorAppendContext().ToOperationContext(OpMaterialize)
+func vectorMaterializeContext() trace.OperationContext {
+	return vectorAppendContext().ToOperationContext(trace.OpMaterialize)
 }
 
-func vectorDeclarationBatch(decl materializeDeclaration) AppendBatch {
-	drafts := make([]RecordDraft, 0, len(decl.Drafts))
+func vectorDeclarationBatch(decl materializeDeclaration) trace.AppendBatch {
+	drafts := make([]trace.RecordDraft, 0, len(decl.Drafts))
 	for _, d := range decl.Drafts {
-		drafts = append(drafts, RecordDraft{
-			Mode:      RecordMode(d.Mode),
+		drafts = append(drafts, trace.RecordDraft{
+			Mode:      trace.RecordMode(d.Mode),
 			SchemaRef: d.SchemaRef,
 			KindLabel: d.KindLabel,
 			Payload:   d.Payload,
 		})
 	}
-	return AppendBatch{
+	return trace.AppendBatch{
 		AppendIntentID: decl.Intent,
-		Groups: []AppendGroup{{
+		Groups: []trace.AppendGroup{{
 			TraceOwnerID: decl.Owner,
-			RetainedContext: &RetainedContext{
+			RetainedContext: &trace.RetainedContext{
 				SubstrateRef: decl.SubstrateRef,
-				Containment:  ContainContained,
+				Containment:  trace.ContainContained,
 			},
 			FactDrafts: drafts,
 		}},
@@ -410,7 +412,7 @@ func vectorRequest(req materializeSeqRequest, factIDs []string) MaterializationR
 	return out
 }
 
-func assertReceiptEquals(t *testing.T, got MaterializationReceipt, want materializeSeqReceipt) {
+func assertReceiptEquals(t *testing.T, got trace.MaterializationReceipt, want materializeSeqReceipt) {
 	t.Helper()
 	if string(got.Outcome) != want.Outcome {
 		t.Errorf("receipt outcome = %q, want %q", got.Outcome, want.Outcome)
@@ -432,13 +434,13 @@ func assertReceiptEquals(t *testing.T, got MaterializationReceipt, want material
 	}
 }
 
-func assertCaptureEquals(t *testing.T, store *SQLiteTraceStore, factID string, want materializeRecordVector, wantWitness materializeWitnessVector) {
+func assertCaptureEquals(t *testing.T, store *trace.SQLiteTraceStore, factID string, want materializeRecordVector, wantWitness materializeWitnessVector) {
 	t.Helper()
 	visible, err := store.ReadFact(context.Background(), reader, factID)
 	if err != nil {
 		t.Fatalf("read capture: %v", err)
 	}
-	rec, ok := visible.(Record)
+	rec, ok := visible.(trace.Record)
 	if !ok {
 		t.Fatalf("capture is a shape, not a record: %T", visible)
 	}
@@ -465,7 +467,7 @@ func assertCaptureEquals(t *testing.T, store *SQLiteTraceStore, factID string, w
 	if err != nil {
 		t.Fatalf("read witness: %v", err)
 	}
-	witness, ok := witnessVisible.(Record)
+	witness, ok := witnessVisible.(trace.Record)
 	if !ok {
 		t.Fatalf("witness is a shape, not a record: %T", witnessVisible)
 	}

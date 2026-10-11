@@ -1,11 +1,11 @@
-package shepherd
+package materialize
 
 // vNext materialization orchestration over the Ring 0 trace store (plan 03
 // §2), mirroring shepherd2/src/shepherd2/vnext/materialization.py.
 //
 // This is deliberately a vNext orchestrator over the store, not a frozen
 // TraceStore method: Python keeps the same boundary (materialize() stays
-// bound to the concrete SQLiteTraceStore because it reaches the
+// bound to the concrete trace.SQLiteTraceStore because it reaches the
 // SQLite-private completed-intent ledger).
 //
 // Ordering law (verified against Python, not guessed): captures are appended
@@ -17,6 +17,7 @@ package shepherd
 import (
 	"context"
 	"crypto/sha256"
+	substrate "github.com/buchenberg/shepherd-kernel-go/internal/substrate"
 
 	"encoding/hex"
 
@@ -38,8 +39,8 @@ import (
 const MaxOwnerOrdinal = math.MaxInt
 
 // materializeReadContext is the read context dispatch reads targets and
-// witnesses through, mirroring Python's ReadContext(actor_ref="vnext:materialize").
-var materializeReadContext = ReadContext{ActorRef: "vnext:materialize", VisibilityProfile: VisibilityPayload}
+// witnesses through, mirroring Python's trace.ReadContext(actor_ref="vnext:materialize").
+var materializeReadContext = trace.ReadContext{ActorRef: "vnext:materialize", VisibilityProfile: trace.VisibilityPayload}
 
 // MaterializationRequest is a path-explicit request to materialize retained
 // declaration records. Bare record ids are insufficient — Python law: the
@@ -72,45 +73,45 @@ func (r MaterializationRequest) CaptureOwner() string {
 }
 
 // Materialize materializes declarations through their witness-stamped
-// substrate. It enforces the reserved OpMaterialize operation kind — the
+// substrate. It enforces the reserved trace.OpMaterialize operation kind — the
 // entry point that makes that vocabulary live — and replays stored receipts
 // for repeated intents without re-dispatching the substrate.
-func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationContext, req MaterializationRequest, reg *SubstrateRegistry) (MaterializationReceipt, error) {
+func Materialize(ctx context.Context, store *trace.SQLiteTraceStore, opCtx trace.OperationContext, req MaterializationRequest, reg *substrate.SubstrateRegistry) (trace.MaterializationReceipt, error) {
 	if err := ensureMaterializeAuthorized(opCtx); err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 	if err := validateMaterializationRequest(req); err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 	digest, err := materializationRequestDigest(req, opCtx)
 	if err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 
 	// Completed-intent ledger: same intent + same digest replays the stored
 	// receipt without touching the substrate; same intent + different digest
 	// is a conflict.
 	if existingDigest, receipt, found, err := store.ReadCompletedMaterialization(req.AppendIntentID); err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	} else if found {
 		if existingDigest != digest {
-			return MaterializationReceipt{}, trace.NewAppendIntentConflictError(fmt.Sprintf("materialize intent %q was already committed with different content", req.AppendIntentID))
+			return trace.MaterializationReceipt{}, trace.NewAppendIntentConflictError(fmt.Sprintf("materialize intent %q was already committed with different content", req.AppendIntentID))
 		}
 		return receipt, nil
 	}
 
 	targets, err := readMaterializationTargets(ctx, store, req)
 	if err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 
 	substrateRef, err := substrateRefForRecords(ctx, store, targets)
 	if err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 	substrate, err := reg.Get(substrateRef)
 	if err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 
 	accepted := map[string]bool{}
@@ -124,17 +125,17 @@ func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationCo
 		}
 	}
 	if len(unsupported) > 0 {
-		return MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("substrate %q does not accept schemas: %s", substrateRef, strings.Join(unsupported, ", ")))
+		return trace.MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("substrate %q does not accept schemas: %s", substrateRef, strings.Join(unsupported, ", ")))
 	}
 
 	result, err := substrate.Materialize(ctx, targets)
 	if err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 	switch result.Outcome {
-	case MaterializationSuccess, MaterializationCleanFailure, MaterializationSplitState:
+	case trace.MaterializationSuccess, trace.MaterializationCleanFailure, trace.MaterializationSplitState:
 	default:
-		return MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("unknown materialization outcome: %s", result.Outcome))
+		return trace.MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("unknown materialization outcome: %s", result.Outcome))
 	}
 	// A clean_failure claims nothing was applied; capture drafts claim the
 	// opposite. Persisting both would store a receipt that contradicts
@@ -144,19 +145,19 @@ func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationCo
 	// append, and no ledger entry is written, so the caller can retry with
 	// a consistent result. No Python-pinned vector covers the combination;
 	// the reference substrates never produce it.
-	if result.Outcome == MaterializationCleanFailure && len(result.CaptureDrafts) > 0 {
-		return MaterializationReceipt{}, trace.NewTraceStoreError("clean_failure materialization results may not emit capture drafts")
+	if result.Outcome == trace.MaterializationCleanFailure && len(result.CaptureDrafts) > 0 {
+		return trace.MaterializationReceipt{}, trace.NewTraceStoreError("clean_failure materialization results may not emit capture drafts")
 	}
 	captureSchemas := map[string]bool{}
 	for _, s := range substrate.CaptureSchemas() {
 		captureSchemas[s] = true
 	}
 	for _, draft := range result.CaptureDrafts {
-		if draft.Mode != Capture {
-			return MaterializationReceipt{}, trace.NewTraceStoreError("materialize substrates may only emit capture drafts")
+		if draft.Mode != trace.Capture {
+			return trace.MaterializationReceipt{}, trace.NewTraceStoreError("materialize substrates may only emit capture drafts")
 		}
 		if !captureSchemas[draft.SchemaRef] {
-			return MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("substrate %q emitted unsupported capture schema %q", substrateRef, draft.SchemaRef))
+			return trace.MaterializationReceipt{}, trace.NewTraceStoreError(fmt.Sprintf("substrate %q emitted unsupported capture schema %q", substrateRef, draft.SchemaRef))
 		}
 	}
 
@@ -164,17 +165,17 @@ func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationCo
 	if len(result.CaptureDrafts) > 0 {
 		appendReceipt, err := store.Append(
 			ctx,
-			AppendContext{
+			trace.AppendContext{
 				ActorRef:             opCtx.ActorRef,
 				PresentedWitnessRefs: append([]string{}, opCtx.PresentedAuthorityRefs...),
 				SchemaVersionSet:     opCtx.SchemaEnvironmentRef,
 				TrustMode:            opCtx.TrustMode,
 			},
-			AppendBatch{
+			trace.AppendBatch{
 				AppendIntentID: req.AppendIntentID,
-				Groups: []AppendGroup{{
+				Groups: []trace.AppendGroup{{
 					TraceOwnerID: req.CaptureOwner(),
-					RetainedContext: &RetainedContext{
+					RetainedContext: &trace.RetainedContext{
 						CapabilityWitnessRefs:   trace.NonNilStrings(opCtx.PresentedAuthorityRefs),
 						SemanticEnvironmentRefs: []string{opCtx.SchemaEnvironmentRef},
 						SubstrateRef:            substrate.SubstrateRef(),
@@ -185,12 +186,12 @@ func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationCo
 			},
 		)
 		if err != nil {
-			return MaterializationReceipt{}, err
+			return trace.MaterializationReceipt{}, err
 		}
 		produced = appendReceipt.FactIDs
 	}
 
-	receipt := MaterializationReceipt{
+	receipt := trace.MaterializationReceipt{
 		Outcome:           result.Outcome,
 		SubstrateRef:      substrateRef,
 		TargetRecordIDs:   trace.NonNilStrings(req.TargetRecordIDs),
@@ -206,18 +207,18 @@ func Materialize(ctx context.Context, store *SQLiteTraceStore, opCtx OperationCo
 		WorldSideAnchors: trace.NonNilAnchors(result.WorldSideAnchors),
 	}
 	if err := store.RecordCompletedMaterialization(req.AppendIntentID, digest, receipt); err != nil {
-		return MaterializationReceipt{}, err
+		return trace.MaterializationReceipt{}, err
 	}
 	return receipt, nil
 }
 
 // ensureMaterializeAuthorized mirrors _ensure_materialize_authorized: the
 // operation must be materialize and the caller must carry the trusted
-// internal witness. This is the check that makes OpMaterialize enforceable
+// internal witness. This is the check that makes trace.OpMaterialize enforceable
 // instead of reserved.
-func ensureMaterializeAuthorized(ctx OperationContext) error {
-	if ctx.Operation != OpMaterialize {
-		return trace.NewTraceStoreError("materialize operation requires OperationContext with Operation = materialize")
+func ensureMaterializeAuthorized(ctx trace.OperationContext) error {
+	if ctx.Operation != trace.OpMaterialize {
+		return trace.NewTraceStoreError("materialize operation requires trace.OperationContext with Operation = materialize")
 	}
 	if ctx.TrustMode == "internal" {
 		return nil
@@ -258,22 +259,22 @@ func validateMaterializationRequest(req MaterializationRequest) error {
 // ordinal <= the cutoff, and must be a declaration. A record id that exists
 // but is not visible on this owner path is rejected — that is the point of
 // the owner-path-explicit request shape.
-func readMaterializationTargets(ctx context.Context, store *SQLiteTraceStore, req MaterializationRequest) ([]Record, error) {
-	slice, err := store.ReadOwnerPrefix(ctx, materializeReadContext, req.TargetTraceOwnerID, req.TargetThroughOwnerOrdinal, ModeBoth)
+func readMaterializationTargets(ctx context.Context, store *trace.SQLiteTraceStore, req MaterializationRequest) ([]trace.Record, error) {
+	slice, err := store.ReadOwnerPrefix(ctx, materializeReadContext, req.TargetTraceOwnerID, req.TargetThroughOwnerOrdinal, trace.ModeBoth)
 	if err != nil {
 		return nil, err
 	}
-	targets := make([]Record, 0, len(req.TargetRecordIDs))
+	targets := make([]trace.Record, 0, len(req.TargetRecordIDs))
 	for _, recordID := range req.TargetRecordIDs {
 		visible, ok := slice.FactsByID[recordID]
 		if !ok {
 			return nil, trace.NewTraceStoreError(fmt.Sprintf("materialize target %q is not present on owner path %q", recordID, req.TargetTraceOwnerID))
 		}
-		record, isRecord := visible.(Record)
+		record, isRecord := visible.(trace.Record)
 		if !isRecord {
 			return nil, trace.NewTraceStoreError(fmt.Sprintf("materialize target %q is not payload-visible on owner path %q", recordID, req.TargetTraceOwnerID))
 		}
-		if record.Envelope.Mode != Declaration {
+		if record.Envelope.Mode != trace.Declaration {
 			return nil, trace.NewTraceStoreError("materialize targets must be declaration records")
 		}
 		targets = append(targets, record)
@@ -285,7 +286,7 @@ func readMaterializationTargets(ctx context.Context, store *SQLiteTraceStore, re
 // witness record and requires the whole batch to name exactly one
 // substrate. The witness is where the declaration's substrate was stamped at
 // append time; materialize does not guess from schemas.
-func substrateRefForRecords(ctx context.Context, store *SQLiteTraceStore, targets []Record) (string, error) {
+func substrateRefForRecords(ctx context.Context, store *trace.SQLiteTraceStore, targets []trace.Record) (string, error) {
 	refs := []string{}
 	seen := map[string]bool{}
 	for _, record := range targets {
@@ -293,7 +294,7 @@ func substrateRefForRecords(ctx context.Context, store *SQLiteTraceStore, target
 		if err != nil {
 			return "", trace.NewTraceStoreError(fmt.Sprintf("record witness %q is not payload-visible", record.Envelope.WitnessRef))
 		}
-		witness, isRecord := visible.(Record)
+		witness, isRecord := visible.(trace.Record)
 		if !isRecord {
 			return "", trace.NewTraceStoreError(fmt.Sprintf("record witness %q is not payload-visible", record.Envelope.WitnessRef))
 		}
@@ -324,7 +325,7 @@ func substrateRefForRecords(ctx context.Context, store *SQLiteTraceStore, target
 // None from "", but its own validation rejects "" for capture_trace_owner_id
 // (see validateMaterializationRequest for the recorded divergence) and a
 // trust_mode of "" cannot be authorized, so the mapping is total.
-func materializationRequestDigest(req MaterializationRequest, ctx OperationContext) (string, error) {
+func materializationRequestDigest(req MaterializationRequest, ctx trace.OperationContext) (string, error) {
 	payload := map[string]any{
 		"append_intent_id":             req.AppendIntentID,
 		"target_trace_owner_id":        req.TargetTraceOwnerID,
