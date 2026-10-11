@@ -4,7 +4,7 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [v0.11.0] - unreleased
+## [v0.11.0] - 2026-10-10
 
 The module is now organized as public component packages. The component
 extraction first landed everything behind `internal/` with the root package
@@ -40,10 +40,18 @@ the merge gate (`MergeProposal`, `MergeReviewer`), `RecoverScopes`, and the
 
 ### Nested module
 
-`sandbox/containerd` (v0.2.0, same release train): the adapter imports the
-component packages at their new paths and carries a relative `replace` to
-the in-repo core so it always builds against the core it ships with; its
-`go.mod` requires core `v0.11.0` once tagged.
+`sandbox/containerd` v0.2.0 ships in the same release train; see its
+section below.
+
+## [sandbox/containerd/v0.2.0] - 2026-10-10
+
+The adapter follows core v0.11.0: it imports the component packages at
+their new paths (`trace`, `sandbox`, `substrate`, `materialize`) instead of
+the root package, and `go.mod` repins to core `v0.11.0`. The committed
+relative `replace` to the in-repo core stays: the adapter always builds and
+tests against the core it ships with, and replace directives do not
+propagate to consumers. Core is unchanged by this release; the import-path
+migration table is in the v0.11.0 section above.
 
 ## [sandbox/containerd/v0.1.5] - 2026-10-10
 
