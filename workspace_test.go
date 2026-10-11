@@ -59,7 +59,9 @@ func TestWorkspace_CaptureDirtyRepo(t *testing.T) {
 		t.Fatalf("CaptureWorkspace: %v", err)
 	}
 	if got := treeOf(&Checkpoint{Workspace: ws}); got == "" {
-		t.Error("dirty repo should produce a non-empty stash SHA")
+		t.Error("dirty repo should record a tree_sha")
+	} else if want := gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got == want {
+		t.Errorf("dirty capture's tree = HEAD's tree %s; the uncommitted content is missing from it", got)
 	}
 }
 

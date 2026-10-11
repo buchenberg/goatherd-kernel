@@ -371,11 +371,13 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 // The working tree — including untracked files — is staged into a scratch index
 // (never the caller's) and the index's tree is written out with
 // `git write-tree`. The recorded tree_sha is the content itself, not a
-// per-capture artifact: two captures of an identical tree — clean or dirty —
-// record the same tree and therefore digest equal, which is the
-// digest-stability contract on Sandbox and what Settle(Select)'s
-// precondition needs (plan 06, U1a). Nothing is committed and the working
-// tree is unchanged, so a caller that had staged changes keeps them staged.
+// per-capture artifact: two captures of an identical tree at the same HEAD —
+// clean or dirty — digest equal, which is the digest-stability contract on
+// Sandbox.Capture and what Settle(Select)'s precondition needs (plan 06,
+// U1a). A capture after the timeline moved (a commit, even one whose tree
+// matches the prior content) records a different state by design. Nothing is
+// committed and the working tree is unchanged, so a caller that had staged
+// changes keeps them staged.
 func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) {
 	w := g.work()
 	if !w.isRepo(ctx) {
@@ -662,17 +664,18 @@ func (g *GitSandbox) WriteFile(context.Context, string, []byte, fs.FileMode) err
 }
 
 // AnnotateDeltaBase implements sbx.DeltaBaseAnnotator: it resolves the fork
-// baseline's tree identity and records it on a freshly captured delta as
-// base_tree_sha, so ApplyDelta's three-way merge has its base recorded at
-// seal time — while the baseline's objects are certainly reachable — rather
-// than resolved later from a legacy identity garbage collection may already
-// have reclaimed.
+// baseline's tree identity, records it on a freshly captured delta as
+// base_tree_sha, and pins both trees with refs (pinTree) so garbage
+// collection cannot reclaim them between seal and settle.
 //
 // The baseline's own data decides the resolution: tree_sha for states
 // recorded after plan 06; a legacy dirty baseline's stash_sha resolves the
 // minted stash commit's tree; a legacy clean baseline (empty stash_sha —
 // `git stash create` reports nothing for a clean tree) resolves the
-// recorded HEAD's tree, which is the same content.
+// recorded HEAD's tree, which is the same content. A legacy dirty baseline
+// whose minted stash has since been pruned fails here with an actionable
+// error — the fork can no longer settle over its dirty baseline, at seal
+// time rather than mid-settle.
 func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.WorkspaceState, baseline trace.WorkspaceState) error {
 	if delta == nil {
 		return fmt.Errorf("git sandbox: annotate delta base: nil delta")
@@ -691,7 +694,7 @@ func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.Workspa
 	} else if stash, _ := baseline.Data["stash_sha"].(string); stash != "" {
 		out, err := w.run(ctx, "rev-parse", stash+"^{tree}")
 		if err != nil {
-			return fmt.Errorf("git sandbox: annotate delta base: rev-parse %s^{tree}: %w", stash, err)
+			return fmt.Errorf("git sandbox: annotate delta base: the legacy baseline's minted stash %s is no longer readable (likely pruned by garbage collection); a fork over a pre-plan-06 dirty baseline cannot settle once its stash commit is gone: %w", stash, err)
 		}
 		baseSHA = out
 	} else {
@@ -709,10 +712,42 @@ func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.Workspa
 		baseSHA = out
 	}
 
+	// Both trees must survive until settle: pin them. The recorded SHAs
+	// alone do not — git's reachability traversal cannot see the trace
+	// store, and write-tree trees are otherwise unreferenced.
+	if err := g.pinTree(ctx, baseSHA); err != nil {
+		return fmt.Errorf("git sandbox: annotate delta base: %w", err)
+	}
+	if tree, _ := delta.Data["tree_sha"].(string); tree != "" {
+		if err := g.pinTree(ctx, tree); err != nil {
+			return fmt.Errorf("git sandbox: annotate delta base: %w", err)
+		}
+	}
+
 	if delta.Data == nil {
 		delta.Data = map[string]any{}
 	}
 	delta.Data["base_tree_sha"] = baseSHA
+	return nil
+}
+
+// stateRefPrefix is the ref namespace that anchors recorded state trees in
+// git's reachability graph. Trees written by `git write-tree` are
+// unreferenced: the trace store records their SHAs, but git's garbage
+// collection traverses refs and the index, not SQLite — an explicit
+// `git gc` between Seal and Settle could otherwise prune the very objects a
+// settlement needs.
+const stateRefPrefix = "refs/shepherd/states/"
+
+// pinTree anchors a recorded state tree with a ref keyed by the tree's own
+// SHA, so identical content shares one pin and re-pinning is idempotent.
+// Pins live for the repository's life; a release lifecycle (unpinning
+// settled and discarded outputs) is a recorded follow-up gap.
+func (g *GitSandbox) pinTree(ctx context.Context, treeSHA string) error {
+	w := g.work()
+	if _, err := w.run(ctx, "update-ref", stateRefPrefix+treeSHA, treeSHA); err != nil {
+		return fmt.Errorf("pin state tree %s: %w", treeSHA, err)
+	}
 	return nil
 }
 

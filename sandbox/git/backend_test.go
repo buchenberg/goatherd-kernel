@@ -887,3 +887,96 @@ func TestGitSandbox_AnnotateDeltaBase(t *testing.T) {
 		t.Error("non-git baseline: want an error")
 	}
 }
+
+// TestGitSandbox_AnnotateDeltaBaseLegacyStashPruned covers the migration
+// path's failure mode: a scope forked from a pre-plan-06 dirty baseline
+// whose minted stash commit has since been pruned. The annotation must
+// return an actionable error naming the stash — a fork over a dirty
+// baseline cannot settle once its stash is gone — not a raw rev-parse
+// failure, and never a silently wrong base.
+func TestGitSandbox_AnnotateDeltaBaseLegacyStashPruned(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	gittest.WriteFile(t, repo, "base.txt", "committed")
+	commitFiles(t, repo, "base files")
+
+	gittest.WriteFile(t, repo, "base.txt", "legacy dirty")
+	stash := gittest.MustGit(t, repo, "stash", "create")
+	if stash == "" {
+		t.Fatal("precondition: git stash create minted nothing for a dirty tree")
+	}
+	mustGit(t, repo, "reset", "--hard")
+	mustGit(t, repo, "gc", "--prune=now")
+
+	// The pruned stash is genuinely unreadable now.
+	if out, err := gittest.Run(t, repo, "rev-parse", stash+"^{tree}"); err == nil {
+		t.Fatalf("precondition: the stash commit survived gc (rev-parse returned %q); the fixture cannot exercise the pruned path", out)
+	}
+
+	sb := NewLocalGitSandbox(repo)
+	delta, err := sb.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture delta: %v", err)
+	}
+	legacyDirty := trace.WorkspaceState{Backend: "git", Revision: gittest.MustHead(t, repo),
+		Data: map[string]any{"head_sha": gittest.MustHead(t, repo), "stash_sha": stash}}
+
+	err = sb.AnnotateDeltaBase(ctx, &delta, legacyDirty)
+	if err == nil {
+		t.Fatal("annotation over a pruned legacy stash succeeded; want an error — a wrong base would mis-merge")
+	}
+	if !strings.Contains(err.Error(), stash) {
+		t.Errorf("error does not name the pruned stash %s: %v", stash, err)
+	}
+	if !strings.Contains(err.Error(), "garbage collection") {
+		t.Errorf("error does not name the cause: %v", err)
+	}
+}
+
+// TestGitSandbox_AnnotateDeltaBasePinsTrees pins the anti-GC contract: the
+// baseline and delta trees recorded at seal survive an explicit prune, so a
+// gc between Seal and Settle cannot reclaim the objects a settlement needs.
+func TestGitSandbox_AnnotateDeltaBasePinsTrees(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	gittest.WriteFile(t, repo, "base.txt", "committed")
+	commitFiles(t, repo, "base files")
+
+	sb := NewLocalGitSandbox(repo)
+	gittest.WriteFile(t, repo, "base.txt", "dirty")
+	baseline, err := sb.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture baseline: %v", err)
+	}
+	gittest.WriteFile(t, repo, "branch.txt", "child")
+	delta, err := sb.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture delta: %v", err)
+	}
+
+	if err := sb.AnnotateDeltaBase(ctx, &delta, baseline); err != nil {
+		t.Fatalf("AnnotateDeltaBase: %v", err)
+	}
+	mustGit(t, repo, "gc", "--prune=now")
+
+	// Both trees are still readable, and the delta still applies after
+	// the prune.
+	base, _ := delta.Data["base_tree_sha"].(string)
+	if _, err := gittest.Run(t, repo, "rev-parse", base+"^{tree}"); err != nil {
+		t.Errorf("baseline tree %s did not survive gc: %v", base, err)
+	}
+	if tree, _ := delta.Data["tree_sha"].(string); tree != "" {
+		if _, err := gittest.Run(t, repo, "rev-parse", tree); err != nil {
+			t.Errorf("delta tree %s did not survive gc: %v", tree, err)
+		}
+	}
+	mustGit(t, repo, "reset", "--hard")
+	mustGit(t, repo, "clean", "-fd")
+	gittest.WriteFile(t, repo, "base.txt", "dirty")
+	if err := sb.ApplyDelta(ctx, delta); err != nil {
+		t.Fatalf("ApplyDelta after gc: %v", err)
+	}
+	if got := gittest.ReadFile(t, repo, "branch.txt"); got != "child" {
+		t.Errorf("branch.txt = %q after a post-gc settle; the pinned delta must still land", got)
+	}
+}

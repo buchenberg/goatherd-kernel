@@ -123,13 +123,19 @@ type Sandbox interface {
 
 	// Capture records the current workspace state. Non-mutating.
 	//
-	// Contract: a capture of unchanged content must be digest-stable —
-	// two captures of an identical workspace must produce equal
-	// WorkspaceState digests, so a caller can compare digests as content
-	// equality (settlement's select precondition does). The git backend
-	// satisfies this with content-derived identities; the containerd
-	// backend does not yet — its captures carry a per-capture sequence
-	// key — and is a recorded follow-up gap, not a silent violation.
+	// Contract: a capture of unchanged content at an unchanged timeline
+	// position must be digest-stable — two captures of an identical
+	// workspace must produce equal WorkspaceState digests, so a caller
+	// can compare digests as content equality (settlement's select
+	// precondition does). A workspace that only advanced its timeline —
+	// a commit whose tree equals the prior content — is a *moved*
+	// workspace by design: its capture digests differently, and callers
+	// like settlement's select verb deliberately treat it as moved,
+	// because their reset semantics would discard the commit; the
+	// apply verb merges instead. The git backend satisfies this with
+	// content-derived identities; the containerd backend does not yet —
+	// its captures carry a per-capture sequence key — and is a recorded
+	// follow-up gap, not a silent violation.
 	Capture(ctx context.Context) (trace.WorkspaceState, error)
 
 	// Apply resets the workspace to a previously captured state. The git
@@ -178,10 +184,10 @@ type DeltaApplier interface {
 
 // DeltaBaseAnnotator is an optional Sandbox capability: the backend can
 // record, on a freshly captured state, the merge base that state's changes
-// are measured against. Settlement's Seal uses it at seal time — while the
-// baseline's objects are certainly reachable — so a later ApplyDelta never
-// needs to resolve a legacy identity (e.g. a minted stash commit) that
-// garbage collection may already have reclaimed.
+// are measured against, and pin the objects that base depends on against
+// backend-side garbage collection. Settlement's Seal uses it at seal time,
+// so a later ApplyDelta never needs to resolve a legacy identity (e.g. a
+// minted stash commit) that garbage collection may already have reclaimed.
 //
 // Backends whose deltas need no base simply do not implement it; callers
 // detect it with a type assertion, the same pattern as DeltaApplier, so

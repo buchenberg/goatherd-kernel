@@ -97,7 +97,11 @@ equals HEAD's tree, so `tree_sha` degenerates to `HEAD^{tree}` — the design
 is uniform, no special case. Both payload keys are content-stable: two
 captures of an identical tree (clean or dirty) now digest equal, and
 `Settle(Select)`'s precondition becomes a true content-equality check with
-no settlement-code change.
+no settlement-code change. Digest equality holds for identical content at
+the same HEAD: a capture after a *timeline* move (a commit, even one whose
+tree matches the prior content) is a moved workspace by design — select's
+destructive reset must never roll back a parent's real commit, so such a
+parent routes to the apply verb, which merges and keeps the commit.
 
 **Apply** (`applyState`): today it resets to `head_sha`, cleans, and
 `git stash apply`s the minted commit. Replace the stash apply with a direct
@@ -134,6 +138,19 @@ instead, which is the same tree. Resolved while sealing either way, so the
 delta never depends on a later `rev-parse` of a possibly-GC'd minted
 commit. The sealed record's payload already carries both full states, so
 recovery-rebuilt outputs inherit the pairing for free.
+
+Recording the SHAs alone does not keep the objects: trees written by
+`write-tree` are unreferenced, and git's reachability traversal cannot see
+the trace store, so an explicit `git gc` between Seal and Settle could
+otherwise prune exactly the objects a settlement needs. Seal therefore also
+**pins** both trees with refs under `refs/shepherd/states/<sha>` — keyed by
+the tree's own SHA, so identical content shares one pin and re-pinning is
+idempotent. Pins live for the repository's life; a release lifecycle
+(unpinning settled and discarded outputs) is a recorded follow-up gap. The
+one residual exposure is the legacy dirty baseline itself: a pre-plan-06
+minted stash may already be pruned when Seal resolves it, which fails Seal
+with an actionable error — a fork over a pruned dirty baseline cannot
+settle, at seal time rather than mid-settle.
 
 Semantics: merge base = `base_tree_sha`, theirs = `tree_sha`, ours = the
 parent worktree as it stands (uncommitted content included, via the same
