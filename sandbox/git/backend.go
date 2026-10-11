@@ -9,6 +9,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -51,6 +52,16 @@ func (g *gitRunner) run(ctx context.Context, args ...string) (string, error) {
 // scratch-index operations redirect git's index (GIT_INDEX_FILE) without ever
 // touching the caller's.
 func (g *gitRunner) runWithEnv(ctx context.Context, env []string, args ...string) (string, error) {
+	out, _, err := g.runExit(ctx, env, args...)
+	return out, err
+}
+
+// runExit is runWithEnv that also reports the process exit code. One git
+// command uses a non-zero exit as protocol rather than failure —
+// `git merge-tree --write-tree` exits 1 for merge conflicts, distinct from
+// the >1 of a real error — so its caller must see the code. exitCode is -1
+// when the process could not run at all.
+func (g *gitRunner) runExit(ctx context.Context, env []string, args ...string) (string, int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -67,10 +78,15 @@ func (g *gitRunner) runWithEnv(ctx context.Context, env []string, args ...string
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w (stderr: %s)",
+		code := -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		}
+		return "", code, fmt.Errorf("git %s: %w (stderr: %s)",
 			strings.Join(args, " "), err, stderr.String())
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(stdout.String()), 0, nil
 }
 
 // indexEnv returns the environment that redirects git at a scratch index. It is
@@ -138,14 +154,13 @@ func (g *gitRunner) seedScratchIndex(ctx context.Context, dst string) bool {
 	return os.WriteFile(dst, data, 0o600) == nil
 }
 
-// stashCreate runs `git stash create` against a scratch index and returns the
-// stash commit SHA. Returns an empty string if the working tree is clean.
-func (g *gitRunner) stashCreate(ctx context.Context, index string) (string, error) {
-	out, err := g.runWithEnv(ctx, indexEnv(index), "stash", "create")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+// writeTree runs `git write-tree` against a scratch index and returns the
+// tree SHA it spells — a content-derived identity: two indexes holding the
+// same content write the same tree, with no timestamp or per-capture
+// uniqueness in it. This is what makes captures of identical trees
+// digest-stable (plan 06, U1a).
+func (g *gitRunner) writeTree(ctx context.Context, index string) (string, error) {
+	return g.runWithEnv(ctx, indexEnv(index), "write-tree")
 }
 
 // headSHA returns the current HEAD commit SHA.
@@ -194,8 +209,8 @@ func (g *gitRunner) isRepo(ctx context.Context) bool {
 //     parent's in-place sandbox.
 //
 // Capture, Apply, and Diff are identical across modes and are shared: git
-// worktrees share the object store, so a stash commit created in a worktree can
-// be applied in the main tree of the same repository.
+// worktrees share the object store, so a tree captured in a worktree can be
+// applied or merged in the main tree of the same repository.
 //
 // Exec, ReadFile, and WriteFile return sbx.ErrUnsupported. Agent processes are the
 // caller's concern; this backend owns git state only.
@@ -206,6 +221,7 @@ type GitSandbox struct {
 
 var _ sbx.Sandbox = (*GitSandbox)(nil)
 var _ sbx.DeltaApplier = (*GitSandbox)(nil)
+var _ sbx.DeltaBaseAnnotator = (*GitSandbox)(nil)
 
 // NewLocalGitSandbox returns an in-place sandbox over repoPath.
 func NewLocalGitSandbox(repoPath string) *GitSandbox {
@@ -353,9 +369,13 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 // Capture records the current workspace state as a reusable trace.WorkspaceState.
 //
 // The working tree — including untracked files — is staged into a scratch index
-// (never the caller's), `git stash create` turns it into an unreferenced commit
-// SHA, and HEAD is recorded. The stash is not popped, so the working tree is
-// unchanged and a caller that had staged changes keeps them staged.
+// (never the caller's) and the index's tree is written out with
+// `git write-tree`. The recorded tree_sha is the content itself, not a
+// per-capture artifact: two captures of an identical tree — clean or dirty —
+// record the same tree and therefore digest equal, which is the
+// digest-stability contract on Sandbox and what Settle(Select)'s
+// precondition needs (plan 06, U1a). Nothing is committed and the working
+// tree is unchanged, so a caller that had staged changes keeps them staged.
 func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) {
 	w := g.work()
 	if !w.isRepo(ctx) {
@@ -368,9 +388,9 @@ func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) 
 	}
 	defer cleanupIndex()
 
-	stashSHA, err := w.stashCreate(ctx, index)
+	treeSHA, err := w.writeTree(ctx, index)
 	if err != nil {
-		return trace.WorkspaceState{}, fmt.Errorf("capture: git stash create: %w", err)
+		return trace.WorkspaceState{}, fmt.Errorf("capture: git write-tree: %w", err)
 	}
 
 	headSHA, err := w.headSHA(ctx)
@@ -382,8 +402,8 @@ func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) 
 		Backend:  "git",
 		Revision: headSHA,
 		Data: map[string]any{
-			"head_sha":  headSHA,
-			"stash_sha": stashSHA,
+			"head_sha": headSHA,
+			"tree_sha": treeSHA,
 		},
 	}, nil
 }
@@ -391,21 +411,32 @@ func (g *GitSandbox) Capture(ctx context.Context) (trace.WorkspaceState, error) 
 // Apply resets the workspace to a captured state. The state is reusable: Apply
 // consumes nothing, so the same value may be applied repeatedly (this is what
 // fork-and-choose needs).
+//
+// Tree-identified states (tree_sha) are restored exactly, including
+// deletions. Legacy states recorded before tree_sha still carry stash_sha and
+// keep the stash-apply path, so old traces keep applying.
 func (g *GitSandbox) Apply(ctx context.Context, ws trace.WorkspaceState) error {
 	if ws.Backend != "git" {
 		return fmt.Errorf("git sandbox: cannot apply state from backend %q", ws.Backend)
 	}
 	headSHA, _ := ws.Data["head_sha"].(string)
-	stashSHA, _ := ws.Data["stash_sha"].(string)
 	if headSHA == "" {
 		return fmt.Errorf("git sandbox: workspace state is missing head_sha")
 	}
-	return g.applyState(ctx, headSHA, stashSHA)
+	if treeSHA, _ := ws.Data["tree_sha"].(string); treeSHA != "" {
+		return g.applyTree(ctx, headSHA, treeSHA)
+	}
+	if _, ok := ws.Data["stash_sha"]; ok {
+		stashSHA, _ := ws.Data["stash_sha"].(string)
+		return g.applyState(ctx, headSHA, stashSHA)
+	}
+	return fmt.Errorf("git sandbox: workspace state has neither tree_sha nor stash_sha")
 }
 
-// applyState is the destructive reset sequence shared by Apply. It resets to the
-// captured HEAD (rolling back commits made after the capture), removes untracked
-// files, then re-applies the captured uncommitted changes.
+// applyState is the legacy destructive reset sequence for states recorded
+// before tree_sha. It resets to the captured HEAD (rolling back commits made
+// after the capture), removes untracked files, then re-applies the captured
+// uncommitted changes from the minted stash commit.
 func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) error {
 	w := g.work()
 
@@ -421,6 +452,31 @@ func (g *GitSandbox) applyState(ctx context.Context, headSHA, stashSHA string) e
 		if err := w.stashApply(ctx, stashSHA); err != nil {
 			return fmt.Errorf("apply: git stash apply %s: %w", stashSHA, err)
 		}
+	}
+	return nil
+}
+
+// applyTree is the destructive reset sequence for tree-identified states:
+// reset to the captured HEAD, remove untracked files, then restore the
+// captured tree with `git read-tree --reset -u`. The -u is load-bearing: it
+// updates the worktree to the new index AND removes worktree entries the
+// tree does not contain, so a capture that held a deletion of a HEAD file
+// lands as a deletion. Writing the tree's entries alone (checkout-index,
+// git restore --source) would leave the deleted file behind and Apply
+// would restore a superset of the captured state.
+func (g *GitSandbox) applyTree(ctx context.Context, headSHA, treeSHA string) error {
+	w := g.work()
+
+	if err := w.resetHardTo(ctx, headSHA); err != nil {
+		return fmt.Errorf("apply: git reset --hard %s: %w", headSHA, err)
+	}
+
+	if err := w.cleanFiles(ctx); err != nil {
+		return fmt.Errorf("apply: git clean -fd: %w", err)
+	}
+
+	if _, err := w.run(ctx, "read-tree", "--reset", "-u", treeSHA); err != nil {
+		return fmt.Errorf("apply: git read-tree --reset -u %s: %w", treeSHA, err)
 	}
 	return nil
 }
@@ -443,6 +499,15 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 		return "", nil, fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
 	}
 
+	// The base is the captured full state, not its HEAD: a dirty baseline's
+	// own uncommitted content must appear on neither side of a fork's diffs
+	// (plan 06, U1b). tree_sha is the full state; Revision (the captured
+	// HEAD) is the legacy fallback for states recorded before it.
+	base := ws.Revision
+	if treeSHA, _ := ws.Data["tree_sha"].(string); treeSHA != "" {
+		base = treeSHA
+	}
+
 	index, cleanupIndex, err := w.stagedIndex(ctx)
 	if err != nil {
 		return "", nil, fmt.Errorf("diff: %w", err)
@@ -450,7 +515,7 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 	defer cleanupIndex()
 
 	env := indexEnv(index)
-	names, err := w.runWithEnv(ctx, env, "diff", "--cached", "--name-only", ws.Revision)
+	names, err := w.runWithEnv(ctx, env, "diff", "--cached", "--name-only", base)
 	if err != nil {
 		return "", nil, fmt.Errorf("diff: git diff --name-only: %w", err)
 	}
@@ -459,7 +524,7 @@ func (g *GitSandbox) Diff(ctx context.Context, ws trace.WorkspaceState, maxLines
 		files = strings.Split(names, "\n")
 	}
 
-	full, err := w.runWithEnv(ctx, env, "diff", "--cached", ws.Revision)
+	full, err := w.runWithEnv(ctx, env, "diff", "--cached", base)
 	if err != nil {
 		return "", nil, fmt.Errorf("diff: git diff: %w", err)
 	}
@@ -482,29 +547,106 @@ func (g *GitSandbox) Exec(context.Context, sbx.ExecRequest) (sbx.ExecResult, err
 // ApplyDelta merges a captured state's changes onto the current workspace
 // without resetting it — the three-way path for settlement's apply verb.
 //
-// The delta's stash commit records its own base, and git worktrees share the
-// object store, so a stash captured in one worktree applies in any checkout
-// of the same repository. `git stash apply` performs the merge: a delta
-// whose paths conflict with the workspace's current content fails and
-// leaves the tree untouched; a clean delta lands as working-tree changes.
+// The delta is baseline-relative (plan 06, U1c): its data carries
+// base_tree_sha, the fork baseline's tree recorded by Seal, and tree_sha,
+// the sealed output's full tree. The merge base is the baseline, so the
+// baseline's own uncommitted content appears on neither side and only the
+// branch's actual changes land. git worktrees share the object store, so
+// trees captured in one worktree merge in any checkout of the same
+// repository.
 //
-// A delta with an empty stash_sha (a clean capture) is a no-op: there is
-// nothing to merge.
+// Shape rules, so no implementation silently reintroduces the historical
+// no-op bug (an empty stash_sha was treated as "clean capture, nothing to
+// apply" even when the caller had handed it a state it could not read):
+//
+//   - tree_sha == base_tree_sha: the output changed nothing; a no-op.
+//   - tree_sha without base_tree_sha: malformed — the merge has no base,
+//     and falling back to HEAD would read the baseline's own content as
+//     branch changes (U1b again). An error.
+//   - neither key present: malformed. An error, never a silent success.
+//   - a legacy stash_sha-carrying delta (recorded before tree_sha) keeps
+//     the stash-apply path; an empty stash is a legacy clean capture, a
+//     legitimate no-op — distinguished by key presence, not value.
+//
+// A conflicting delta fails and leaves the workspace untouched.
 func (g *GitSandbox) ApplyDelta(ctx context.Context, delta trace.WorkspaceState) error {
 	if delta.Backend != "git" {
 		return fmt.Errorf("git sandbox: cannot apply delta from backend %q", delta.Backend)
 	}
-	stashSHA, _ := delta.Data["stash_sha"].(string)
-	if stashSHA == "" {
-		return nil // clean capture: nothing to apply
+	treeSHA, _ := delta.Data["tree_sha"].(string)
+	baseSHA, _ := delta.Data["base_tree_sha"].(string)
+	if treeSHA != "" {
+		if baseSHA == "" {
+			return fmt.Errorf("git sandbox: apply delta: tree_sha without base_tree_sha: the delta has no merge base")
+		}
+		if treeSHA == baseSHA {
+			return nil
+		}
+		return g.mergeTree(ctx, baseSHA, treeSHA)
 	}
+	if stashSHA, ok := delta.Data["stash_sha"].(string); ok {
+		if stashSHA == "" {
+			return nil // legacy clean capture: nothing to apply
+		}
+		w := g.work()
+		if !w.isRepo(ctx) {
+			return fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
+		}
+		if err := w.stashApply(ctx, stashSHA); err != nil {
+			return fmt.Errorf("git sandbox: apply delta %s: %w", stashSHA, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("git sandbox: apply delta: state has neither tree_sha nor stash_sha")
+}
 
+// mergeTree lands a baseline-relative delta: a three-way merge whose base is
+// the fork baseline's tree, whose theirs is the delta's tree, and whose ours
+// is the current worktree (uncommitted content included, staged through the
+// same scratch index Capture and Diff use). `git merge-tree --write-tree`
+// computes the merged tree without touching any worktree, so a conflict
+// fails before anything lands. The landing then materializes the merged
+// tree through the scratch index (GIT_INDEX_FILE) with `read-tree --reset
+// -u`: the caller's real index is untouched, while the worktree gains the
+// merged content including removals — read-tree's -u removes entries the
+// merge deleted, the same hazard Apply's restore closes.
+func (g *GitSandbox) mergeTree(ctx context.Context, baseSHA, treeSHA string) error {
 	w := g.work()
 	if !w.isRepo(ctx) {
 		return fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
 	}
-	if err := w.stashApply(ctx, stashSHA); err != nil {
-		return fmt.Errorf("git sandbox: apply delta %s: %w", stashSHA, err)
+
+	index, cleanupIndex, err := w.stagedIndex(ctx)
+	if err != nil {
+		return fmt.Errorf("apply delta: %w", err)
+	}
+	defer cleanupIndex()
+
+	env := indexEnv(index)
+	oursSHA, err := w.writeTree(ctx, index)
+	if err != nil {
+		return fmt.Errorf("apply delta: git write-tree: %w", err)
+	}
+
+	merged, code, err := w.runExit(ctx, nil, "merge-tree", "--write-tree", "--merge-base="+baseSHA, oursSHA, treeSHA)
+	if err != nil {
+		if code == 1 {
+			return fmt.Errorf("git sandbox: apply delta: the delta conflicts with the current workspace; nothing was applied: %w", err)
+		}
+		return fmt.Errorf("git sandbox: apply delta: git merge-tree: %w", err)
+	}
+	mergedSHA := strings.SplitN(merged, "\n", 2)[0]
+	if mergedSHA == "" {
+		return fmt.Errorf("git sandbox: apply delta: git merge-tree wrote no tree")
+	}
+	if mergedSHA == oursSHA {
+		// The merge resolved to the workspace's own content: the delta's
+		// changes are already present. Nothing to land.
+		return nil
+	}
+
+	if _, err := w.runWithEnv(ctx, env, "read-tree", "--reset", "-u", mergedSHA); err != nil {
+		return fmt.Errorf("git sandbox: apply delta: land merged tree: %w", err)
 	}
 	return nil
 }
@@ -517,6 +659,61 @@ func (g *GitSandbox) ReadFile(context.Context, string) ([]byte, error) {
 // WriteFile is not implemented.
 func (g *GitSandbox) WriteFile(context.Context, string, []byte, fs.FileMode) error {
 	return sbx.ErrUnsupported
+}
+
+// AnnotateDeltaBase implements sbx.DeltaBaseAnnotator: it resolves the fork
+// baseline's tree identity and records it on a freshly captured delta as
+// base_tree_sha, so ApplyDelta's three-way merge has its base recorded at
+// seal time — while the baseline's objects are certainly reachable — rather
+// than resolved later from a legacy identity garbage collection may already
+// have reclaimed.
+//
+// The baseline's own data decides the resolution: tree_sha for states
+// recorded after plan 06; a legacy dirty baseline's stash_sha resolves the
+// minted stash commit's tree; a legacy clean baseline (empty stash_sha —
+// `git stash create` reports nothing for a clean tree) resolves the
+// recorded HEAD's tree, which is the same content.
+func (g *GitSandbox) AnnotateDeltaBase(ctx context.Context, delta *trace.WorkspaceState, baseline trace.WorkspaceState) error {
+	if delta == nil {
+		return fmt.Errorf("git sandbox: annotate delta base: nil delta")
+	}
+	if delta.Backend != "git" || baseline.Backend != "git" {
+		return fmt.Errorf("git sandbox: annotate delta base requires git states, got delta %q and baseline %q", delta.Backend, baseline.Backend)
+	}
+	w := g.work()
+	if !w.isRepo(ctx) {
+		return fmt.Errorf("git sandbox: %s is not a git working tree", g.workDir())
+	}
+
+	var baseSHA string
+	if tree, _ := baseline.Data["tree_sha"].(string); tree != "" {
+		baseSHA = tree
+	} else if stash, _ := baseline.Data["stash_sha"].(string); stash != "" {
+		out, err := w.run(ctx, "rev-parse", stash+"^{tree}")
+		if err != nil {
+			return fmt.Errorf("git sandbox: annotate delta base: rev-parse %s^{tree}: %w", stash, err)
+		}
+		baseSHA = out
+	} else {
+		head, _ := baseline.Data["head_sha"].(string)
+		if head == "" {
+			head = baseline.Revision
+		}
+		if head == "" {
+			return fmt.Errorf("git sandbox: annotate delta base: baseline carries no tree, stash, or head identity")
+		}
+		out, err := w.run(ctx, "rev-parse", head+"^{tree}")
+		if err != nil {
+			return fmt.Errorf("git sandbox: annotate delta base: rev-parse %s^{tree}: %w", head, err)
+		}
+		baseSHA = out
+	}
+
+	if delta.Data == nil {
+		delta.Data = map[string]any{}
+	}
+	delta.Data["base_tree_sha"] = baseSHA
+	return nil
 }
 
 // --- OpenSandbox registration ---

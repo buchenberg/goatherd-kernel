@@ -202,6 +202,17 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 		return nil, fmt.Errorf("seal scope %s: capture workspace: %w", scopeID, err)
 	}
 
+	// The output's delta must carry its merge base recorded now, at seal
+	// time, while the baseline's objects are certainly reachable — not
+	// resolved at settle time from a legacy identity garbage collection
+	// may already have reclaimed. Backends without the capability (their
+	// deltas need no base) seal unchanged.
+	if ann, ok := sb.(sandbox.DeltaBaseAnnotator); ok {
+		if err := ann.AnnotateDeltaBase(ctx, &ws, baseline); err != nil {
+			return nil, fmt.Errorf("seal scope %s: record delta base: %w", scopeID, err)
+		}
+	}
+
 	diff, files, err := sb.Diff(ctx, baseline, 0)
 	if err != nil {
 		return nil, fmt.Errorf("seal scope %s: diff against baseline: %w", scopeID, err)
