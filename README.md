@@ -81,7 +81,7 @@ Create isolated execution branches for speculative work. Fork records the branch
 mgr := shepherd.NewScopeManager(store)
 
 // A root scope carries the workspace it operates on.
-parent, _ := mgr.Create("agent:main", sandbox.NewLocalGitSandbox(repoPath))
+parent, _ := mgr.Create("agent:main", git.NewLocalGitSandbox(repoPath))
 child, _ := mgr.Fork(parent.ID(), "agent:experimental", nil)
 
 // Child runs in isolation...
@@ -150,7 +150,7 @@ Worktree allocates a detached `git worktree` per scope, so a speculative branch
 cannot touch the parent tree and `Discard` becomes a physical rollback:
 
 ```go
-sb := sandbox.NewWorktreeSandbox(repoPath, worktreePath)
+sb := git.NewWorktreeSandbox(repoPath, worktreePath)
 sb.Create(ctx, sandbox.SandboxSpec{})
 defer sb.Destroy(ctx)
 
@@ -352,7 +352,8 @@ trace  <-  sandbox  <-  substrate  <-  materialize
 |---|---|
 | `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, workspace operations, handles (`StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`), the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`), the `Supervisor` rules engine |
 | `trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
-| `sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
+| `sandbox` | the `Sandbox` interface, the backend registry |
+| `sandbox/git` | the git backend (in-place, worktree); self-registers as "git" |
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `internal/gittest`, `internal/testvectors` | test support shared across packages |
@@ -365,7 +366,7 @@ the CHANGELOG's v0.11.0 section carries the full migration table. Runtime
 symbols (`shepherd.NewScope`, `shepherd.NewScopeManager`, ...) are
 unchanged.
 
-\* `git` is built into the core module; the containerd backend is a nested
+\* `git` ships in the core module as the `sandbox/git` subpackage; the containerd backend is a nested
 module (`sandbox/containerd`) that needs a Linux environment at runtime —
 native Linux, **WSL2**, or a Linux server — because containerd and overlayfs
 are Linux. The module itself cross-compiles (it builds on Windows and macOS;
@@ -599,7 +600,7 @@ snapshot, err := scope.RestoreCheckpoint(ctx, cp)
 
 Two implementations exist, packaged differently on purpose:
 
-- **git** — built into the core module. It is a materializer, not an
+- **git** — in the core module, the `sandbox/git` subpackage. It is a materializer, not an
   isolation boundary (`Isolated: false` in-place, `true` for a detached
   worktree), has zero external dependencies, and is the carrier the
   kernel's own test suite rides on.
@@ -616,17 +617,17 @@ kernel never inspects a backend beyond the opaque
 register factories and the host resolves a configured name:
 
 ```go
-// Config-driven construction: the git backend self-registers in-core, and
+// Config-driven construction: the git backend (sandbox/git) self-registers, and
 // the containerd backend self-registers when its package is imported
 // (sandbox/containerd v0.1.5+ pins a registry-carrying core).
-sb, err := sandbox.OpenSandbox("git", sandbox.GitSandboxConfig{RepoPath: repoPath})
+sb, err := sandbox.OpenSandbox("git", git.GitSandboxConfig{RepoPath: repoPath})
 
 _, err = sandbox.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
 backends := sandbox.SandboxBackends()          // sorted names, for config diagnostics
 
 // Direct constructors remain available:
-inPlace := sandbox.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
-worktree := sandbox.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
+inPlace := git.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
+worktree := git.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
 
 err = sb.Create(ctx, sandbox.SandboxSpec{})    // OpenSandbox does NOT provision; Create is the lifecycle step
 defer sb.Destroy(ctx)

@@ -4,6 +4,22 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+### Changed (breaking)
+- **The git backend moved to the `sandbox/git` subpackage**
+  (`github.com/buchenberg/shepherd-kernel-go/sandbox/git`):
+  `NewLocalGitSandbox`, `NewWorktreeSandbox`, `GitSandbox`, and
+  `GitSandboxConfig` now live in the `git` package rather than `sandbox`.
+  The backend still self-registers as `"git"` on import, so config-driven
+  construction keeps its shape:
+  `sandbox.OpenSandbox("git", git.GitSandboxConfig{...})`. This is the §13
+  pre-freeze packaging decision (a): namespace separation within the core
+  module — the `sandbox` package now owns the contract and the registry,
+  and the backend lives beside `sandbox/containerd` as a sibling. No
+  nested module: git has zero external dependencies and is the kernel's
+  own test carrier.
+
 ## [v0.12.0] - 2026-10-11
 
 ### Added

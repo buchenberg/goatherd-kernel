@@ -3,6 +3,7 @@ package shepherd
 import (
 	"context"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	mustGit(t, repo, "commit", "-m", "initial code")
 
 	// 3. Create a scope for the sub-agent
-	scope, err := mgr.Create("sub:worker", sandbox.NewLocalGitSandbox(repo))
+	scope, err := mgr.Create("sub:worker", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	mustGit(t, repo, "commit", "-m", "add app.go")
 
 	// Parent scope
-	parent, err := mgr.Create("sub:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("sub:parent", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	mustGit(t, repo, "add", "-A")
 	mustGit(t, repo, "commit", "-m", "v1")
 
-	scope, err := mgr.Create("sub:multi", sandbox.NewLocalGitSandbox(repo))
+	scope, err := mgr.Create("sub:multi", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -301,7 +302,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	mustGit(t, repo, "add", "-A")
 	mustGit(t, repo, "commit", "-m", "base")
 
-	parent, err := mgr.Create("sub:orchestrator", sandbox.NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("sub:orchestrator", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -328,7 +329,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 
 	for i, v := range variants {
 		childOwner := "sub:variant-" + string(rune('a'+i))
-		child, err := mgr.ForkIsolated(parent.ID(), childOwner, nil, sandbox.NewWorktreeSandbox(repo, v.worktree))
+		child, err := mgr.ForkIsolated(parent.ID(), childOwner, nil, git.NewWorktreeSandbox(repo, v.worktree))
 		if err != nil {
 			t.Fatalf("ForkIsolated %d: %v", i, err)
 		}

@@ -21,7 +21,10 @@
 //   - github.com/buchenberg/shepherd-kernel-go/trace — the record model,
 //     canonical JSON, the SQLite trace store, and the effect bus
 //   - github.com/buchenberg/shepherd-kernel-go/sandbox — the Sandbox
-//     interface, the git backends, and the backend registry
+//     interface and the backend registry
+//   - github.com/buchenberg/shepherd-kernel-go/sandbox/git — the git
+//     backend (in-place and detached-worktree modes); self-registers as
+//     "git"
 //   - github.com/buchenberg/shepherd-kernel-go/substrate — the Substrate
 //     contract and the echo/KV/workspace substrates
 //   - github.com/buchenberg/shepherd-kernel-go/materialize — the

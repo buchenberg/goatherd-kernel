@@ -620,10 +620,15 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
       module (an API break: `NewLocalGitSandbox`/`NewWorktreeSandbox` move;
       deliberately NOT a separate Go module — git has zero external
       dependencies and is the test carrier, so nesting would buy nothing
-      and cost the T0.8b repin dance);
+      and cost the T0.8b repin dance).
+      *(Executed: the backend lives at `sandbox/git`
+      (`github.com/buchenberg/shepherd-kernel-go/sandbox/git`), still
+      self-registering as "git" on import; `sandbox` keeps the contract
+      and the registry. The registry mechanics tests stayed in `sandbox`;
+      the backend's OpenSandbox integration moved with it.)*
       (b) split the flat `shepherd` package (kernel / runtime / backends
-      share one namespace today). Both are hard to fix after an API
-      freeze; both are cosmetic-but-real now. The `SandboxFactory`/
+      share one namespace today). *(Still open.)* Both are hard to fix
+      after an API freeze; both are cosmetic-but-real now. The `SandboxFactory`/
       `OpenSandbox` registry (the construction seam) landed in v0.10.0
       (PR #31 at `0c7c416`, verified from a clean module) so
       backend *selection* is already decoupled from backend *location*.

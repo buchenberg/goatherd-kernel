@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -578,7 +579,7 @@ func TestScopeManager_CreateCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-managed", sandbox.NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-managed", git.NewLocalGitSandbox(repo))
 
 	cp, err := mgr.CreateCheckpoint(context.Background(), scope.ID(), []byte("snapshot"))
 	if err != nil {
@@ -593,7 +594,7 @@ func TestScopeManager_RestoreCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-restore", sandbox.NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-restore", git.NewLocalGitSandbox(repo))
 
 	writeFile(t, repo, "main.go", "original")
 	mustGit(t, repo, "add", "-A")
@@ -625,7 +626,7 @@ func TestScopeManager_LatestCheckpoint(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	scope, _ := mgr.Create("sub:cp-latest", sandbox.NewLocalGitSandbox(repo))
+	scope, _ := mgr.Create("sub:cp-latest", git.NewLocalGitSandbox(repo))
 
 	cp1, err := mgr.CreateCheckpoint(context.Background(), scope.ID(), nil)
 	if err != nil {
@@ -668,7 +669,7 @@ func TestScopeManager_ConcurrentCheckpointsUniqueIDs(t *testing.T) {
 	scopes := make([]*Scope, n)
 	for i := range scopes {
 		repo := newTestRepo(t)
-		scope, err := mgr.Create(fmt.Sprintf("sub:cp-concurrent:%d", i), sandbox.NewLocalGitSandbox(repo))
+		scope, err := mgr.Create(fmt.Sprintf("sub:cp-concurrent:%d", i), git.NewLocalGitSandbox(repo))
 		if err != nil {
 			t.Fatalf("create scope %d: %v", i, err)
 		}
@@ -722,7 +723,7 @@ func TestScope_WithSandbox(t *testing.T) {
 		t.Error("a fresh scope should have no sandbox")
 	}
 
-	sb := sandbox.NewLocalGitSandbox(repo)
+	sb := git.NewLocalGitSandbox(repo)
 	got := scope.WithSandbox(sb, true)
 	if got != scope {
 		t.Error("WithSandbox should return the scope for chaining")
@@ -735,7 +736,7 @@ func TestScope_WithSandbox(t *testing.T) {
 func TestScope_ForkInheritsSandboxWithoutOwnership(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)
-	parent := NewScope(store, "sub:inherit").WithSandbox(sandbox.NewLocalGitSandbox(repo), false)
+	parent := NewScope(store, "sub:inherit").WithSandbox(git.NewLocalGitSandbox(repo), false)
 
 	child, err := parent.Fork("sub:inherit-child", nil)
 	if err != nil {
@@ -761,10 +762,10 @@ func TestScopeManager_ForkIsolatedOwnsSandbox(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("sub:iso-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("sub:iso-parent", git.NewLocalGitSandbox(repo))
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	sb := git.NewWorktreeSandbox(repo, wtPath)
 	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create: %v", err)
 	}
@@ -796,10 +797,10 @@ func TestScopeManager_DestroyScopeSandbox(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("sub:destroy-parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("sub:destroy-parent", git.NewLocalGitSandbox(repo))
 
 	wtPath := filepath.Join(t.TempDir(), "wt")
-	sb := sandbox.NewWorktreeSandbox(repo, wtPath)
+	sb := git.NewWorktreeSandbox(repo, wtPath)
 	if err := sb.Create(context.Background(), sandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("worktree create: %v", err)
 	}

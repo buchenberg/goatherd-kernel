@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ func TestRecover_RestartRoundTrip(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 
-	parent, err := mgr.Create("rec:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("rec:parent", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -83,9 +84,9 @@ func TestRecover_RestartRoundTrip(t *testing.T) {
 			resolved[scopeID] = true
 			switch scopeID {
 			case "scope:rec:parent":
-				return sandbox.NewLocalGitSandbox(repo), nil
+				return git.NewLocalGitSandbox(repo), nil
 			case "scope:rec:child":
-				return sandbox.NewWorktreeSandbox(repo, wtPath), nil
+				return git.NewWorktreeSandbox(repo, wtPath), nil
 			}
 			return nil, nil // deliberate non-adoption
 		},
@@ -164,7 +165,7 @@ func TestRecover_TerminalStatesAndPrune(t *testing.T) {
 	store, path := fileStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("term:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("term:parent", git.NewLocalGitSandbox(repo))
 
 	merged, err := mgr.Fork(parent.ID(), "term:merged", nil)
 	if err != nil {
@@ -242,7 +243,7 @@ func TestRecover_CheckpointStaleness(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("stale:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("stale:parent", git.NewLocalGitSandbox(repo))
 
 	// A checkpoint whose base is then left behind by a commit.
 	stale, err := mgr.CreateCheckpoint(ctx, parent.ID(), nil)
@@ -260,7 +261,7 @@ func TestRecover_CheckpointStaleness(t *testing.T) {
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
 		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
-			return sandbox.NewLocalGitSandbox(repo), nil
+			return git.NewLocalGitSandbox(repo), nil
 		},
 	})
 	if err != nil {
@@ -293,7 +294,7 @@ func TestRecover_CheckpointConsumedAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("used:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("used:parent", git.NewLocalGitSandbox(repo))
 
 	used, err := mgr.CreateCheckpoint(ctx, parent.ID(), []byte("used"))
 	if err != nil {
@@ -324,7 +325,7 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("out:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("out:parent", git.NewLocalGitSandbox(repo))
 
 	sealedChild, wtSealed := forkWorktreeChild(t, mgr, parent.ID(), "out:sealed", repo, "wt-sealed")
 	if err := os.WriteFile(filepath.Join(wtSealed, "winner.txt"), []byte("wins"), 0o644); err != nil {
@@ -353,9 +354,9 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
 			switch scopeID {
 			case "scope:out:parent":
-				return sandbox.NewLocalGitSandbox(repo), nil
+				return git.NewLocalGitSandbox(repo), nil
 			case "scope:out:sealed":
-				return sandbox.NewWorktreeSandbox(repo, wtSealed), nil
+				return git.NewWorktreeSandbox(repo, wtSealed), nil
 			}
 			return nil, nil
 		},
@@ -402,7 +403,7 @@ func TestRecover_ResolverOrphanCleans(t *testing.T) {
 	ctx := context.Background()
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("orph:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("orph:parent", git.NewLocalGitSandbox(repo))
 
 	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "orph:child", repo, "wt")
 	_ = child
@@ -439,7 +440,7 @@ func TestCheckpointBlobLimit(t *testing.T) {
 	store := newMemStore(t).WithCheckpointBlobLimit(8)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("limit:parent", sandbox.NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("limit:parent", git.NewLocalGitSandbox(repo))
 
 	if _, err := mgr.CreateCheckpoint(context.Background(), parent.ID(), []byte("0123456789")); err == nil {
 		t.Error("oversized snapshot must fail the checkpoint")
