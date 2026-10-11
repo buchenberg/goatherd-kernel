@@ -89,14 +89,6 @@ func (s *SQLiteTraceStore) WithCheckpointBlobLimit(limit int64) *SQLiteTraceStor
 // long session cannot balloon the trace database unnoticed.
 const DefaultCheckpointBlobLimit = 1 << 20
 
-// CheckpointBlobLimitOrDefault resolves the effective limit.
-func (s *SQLiteTraceStore) CheckpointBlobLimitOrDefault() int64 {
-	if s.checkpointBlobLimit > 0 {
-		return s.checkpointBlobLimit
-	}
-	return DefaultCheckpointBlobLimit
-}
-
 // NewSQLiteTraceStore creates a new trace store at the given path.
 // Use ":memory:" for an in-memory store.
 func NewSQLiteTraceStore(path string) (*SQLiteTraceStore, error) {

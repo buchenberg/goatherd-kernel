@@ -67,7 +67,7 @@ func NewWorkspaceSubstrate(sb sandbox.Sandbox) *WorkspaceSubstrate {
 	return &WorkspaceSubstrate{sandbox: sb}
 }
 
-// sandbox.Sandbox returns the bridged sandbox.
+// Sandbox returns the bridged sandbox.
 func (w *WorkspaceSubstrate) Sandbox() sandbox.Sandbox { return w.sandbox }
 
 func (w *WorkspaceSubstrate) SubstrateRef() string { return WorkspaceSubstrateRef }
@@ -80,7 +80,7 @@ func (w *WorkspaceSubstrate) CaptureSchemas() []string {
 	return []string{SchemaWorkspaceFileWriteApplied, SchemaWorkspaceExecApplied}
 }
 
-// trace.Containment reports what the bridged sandbox claims, so the witness tells
+// Containment reports what the bridged sandbox claims, so the witness tells
 // the truth about git-in-place (uncontained) versus isolated backends.
 func (w *WorkspaceSubstrate) Containment() trace.Containment {
 	return w.sandbox.Capabilities().Containment

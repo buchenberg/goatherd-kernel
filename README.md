@@ -302,11 +302,15 @@ store separate from the trace, and the echo substrate is the test fixture.
 
 The module is organized by component. Everything a consumer imports lives in
 the root `shepherd` package; the components behind it live under `internal/`,
-which makes the dependency direction compiler-enforced: `trace` is a leaf
-(it imports no other internal package), `sandbox` and `substrate` may depend
-on `trace` but not on each other's callers, `handles` and `materialize` sit
-above the store, `scope` orchestrates the tree over the store and substrate
-layers, and `supervision` watches the scope tree — the arrows only point down:
+which keeps them unimportable outside the module. Within the module the
+dependency graph is acyclic by construction, with `trace` as the leaf:
+
+```
+trace  <-  sandbox  <-  substrate  <-  materialize
+  ^           ^
+  |           |
+handles     scope  <-  supervision
+```
 
 | Package | Contents |
 |---|---|

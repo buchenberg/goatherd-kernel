@@ -717,7 +717,7 @@ func TestMaterializeCrashWindowReplayIsConsistent(t *testing.T) {
 
 	// Simulate the crash window: the captures are committed, the ledger
 	// entry is not.
-	if err := store.DeleteMaterializationIntent(context.Background(), req.AppendIntentID); err != nil {
+	if err := trace.DeleteMaterializationIntent(context.Background(), store, req.AppendIntentID); err != nil {
 		t.Fatalf("delete ledger row: %v", err)
 	}
 

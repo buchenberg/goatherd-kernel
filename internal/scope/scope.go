@@ -178,9 +178,9 @@ func (s *Scope) Children() []*Scope {
 	return cp
 }
 
-// trace.Capture the fork baseline: the parent's workspace state at fork time.
+// Capture the fork baseline: the parent's workspace state at fork time.
 // It is the diff base for merge review (ProposeMerge) and the fast-forward
-// reference for settlement's select verb. trace.Capture is non-mutating for the
+// reference for settlement's select verb. Capture is non-mutating for the
 // backends the kernel ships (the git backend stages into a scratch index),
 // so forking leaves the parent's workspace exactly as it was. A scope
 // without a sandbox is pure-causal and forks without a baseline; its

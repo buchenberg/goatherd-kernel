@@ -6,6 +6,7 @@ import (
 	"fmt"
 	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,13 +314,18 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 
 	repo := g.repo()
 	if _, err := repo.run(ctx, "worktree", "remove", "--force", g.worktreePath); err != nil {
-		if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
-			return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
-				g.worktreePath, rmErr, err)
+		// "git worktree remove" fails harmlessly when the worktree was
+		// never created or is already gone, and os.RemoveAll is a no-op
+		// then — an idempotent Destroy must not warn about it. Only log
+		// when the fallback actually removed something that existed.
+		if _, statErr := os.Lstat(g.worktreePath); statErr == nil {
+			if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
+				return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
+					g.worktreePath, rmErr, err)
+			}
+			slog.Warn("git sandbox: git worktree remove failed, removed with os.RemoveAll fallback",
+				"worktree", g.worktreePath, "err", err)
 		}
-		// Primary path (git worktree remove) failed but fallback succeeded.
-		// Log the original error for debugging.
-		fmt.Fprintf(os.Stderr, "git sandbox: git worktree remove failed (fell back to os.RemoveAll): %v\n", err)
 	}
 
 	// Use a fresh context: cleanup must not be abandoned because the

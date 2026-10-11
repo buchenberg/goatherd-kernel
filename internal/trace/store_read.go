@@ -124,11 +124,11 @@ func (s *SQLiteTraceStore) FactCount(ctx context.Context) (int, error) {
 	return count, err
 }
 
-// scannedRecord is one record selected by schema ref, with the owner path it
+// ScannedRecord is one record selected by schema ref, with the owner path it
 // was read from and its decoded payload. Recovery is the caller: the
 // lifecycle, checkpoint, and settlement schemas are open-map payloads, so
 // records are the durable registry a restart rebuilds from.
-type scannedRecord struct {
+type ScannedRecord struct {
 	RecordID  string
 	OwnerID   string
 	SchemaRef string
@@ -139,7 +139,12 @@ type scannedRecord struct {
 // of the given refs, each with its owner path (path_ref) and payload. A
 // record retained on multiple paths appears once per path; lifecycle
 // records are single-path by construction.
-func (s *SQLiteTraceStore) ScanRecordsBySchema(gctx context.Context, schemaRefs ...string) ([]scannedRecord, error) {
+//
+// It is a package function, deliberately not a method on SQLiteTraceStore:
+// the root package re-exports the store type, and a method would surface
+// this no-ReadContext scan in the public API. As an internal/ package
+// function it stays invisible to importers outside the module.
+func ScanRecordsBySchema(gctx context.Context, store *SQLiteTraceStore, schemaRefs ...string) ([]ScannedRecord, error) {
 	if len(schemaRefs) == 0 {
 		return nil, nil
 	}
@@ -151,7 +156,7 @@ func (s *SQLiteTraceStore) ScanRecordsBySchema(gctx context.Context, schemaRefs 
 		args = append(args, ref)
 	}
 
-	rows, err := s.db.QueryContext(gctx, `
+	rows, err := store.db.QueryContext(gctx, `
 		SELECT records.record_id, path_entries.path_ref, records.schema_ref, records.body_json
 		FROM records
 		JOIN path_entries ON path_entries.record_id = records.record_id
@@ -162,9 +167,9 @@ func (s *SQLiteTraceStore) ScanRecordsBySchema(gctx context.Context, schemaRefs 
 	}
 	defer rows.Close()
 
-	var out []scannedRecord
+	var out []ScannedRecord
 	for rows.Next() {
-		var rec scannedRecord
+		var rec ScannedRecord
 		var bodyJSON string
 		if err := rows.Scan(&rec.RecordID, &rec.OwnerID, &rec.SchemaRef, &bodyJSON); err != nil {
 			return nil, fmt.Errorf("scan record row: %w", err)

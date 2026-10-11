@@ -8,9 +8,11 @@ package trace
 // table lives in the trace database — one file to back up, one place the
 // recovery pass reads.
 //
-// The methods are exported because the runtime layer (scope checkpoints and
-// recovery) lives outside this package; internal/ keeps them invisible to
-// importers outside the module.
+// These are package functions taking the store, deliberately not methods on
+// SQLiteTraceStore: the root package re-exports the store type, and a method
+// would surface the blob plumbing — and its state mutation — in the public
+// API. As internal/ package functions they stay invisible to importers
+// outside the module.
 
 import (
 	"context"
@@ -31,10 +33,19 @@ type RecoveredCheckpointBlob struct {
 	CreatedAt    time.Time
 }
 
+// CheckpointBlobLimitOrDefault resolves the store's effective checkpoint
+// blob limit, defaulting to DefaultCheckpointBlobLimit.
+func CheckpointBlobLimitOrDefault(store *SQLiteTraceStore) int64 {
+	if store.checkpointBlobLimit > 0 {
+		return store.checkpointBlobLimit
+	}
+	return DefaultCheckpointBlobLimit
+}
+
 // PersistCheckpointBlob stores a checkpoint's restorable halves. It is the
 // hard-fail half of durability: a checkpoint that cannot be persisted must
 // not be handed out as restorable.
-func (s *SQLiteTraceStore) PersistCheckpointBlob(gctx context.Context, checkpointID, scopeID string, seq uint64, ws WorkspaceState, snapshot []byte, createdAt time.Time) error {
+func PersistCheckpointBlob(gctx context.Context, store *SQLiteTraceStore, checkpointID, scopeID string, seq uint64, ws WorkspaceState, snapshot []byte, createdAt time.Time) error {
 	stateJSON, err := json.Marshal(map[string]any{
 		"backend":  ws.Backend,
 		"revision": ws.Revision,
@@ -49,7 +60,7 @@ func (s *SQLiteTraceStore) PersistCheckpointBlob(gctx context.Context, checkpoin
 	if snapshot == nil {
 		snapshot = []byte{}
 	}
-	_, err = s.db.ExecContext(gctx, `
+	_, err = store.db.ExecContext(gctx, `
 		INSERT OR REPLACE INTO checkpoint_snapshots
 		(checkpoint_id, scope_id, seq, state_json, snapshot, created_at_unixnano)
 		VALUES (?, ?, ?, ?, ?, ?)`,
@@ -63,8 +74,8 @@ func (s *SQLiteTraceStore) PersistCheckpointBlob(gctx context.Context, checkpoin
 // LoadCheckpointBlobs returns every persisted checkpoint, oldest first by
 // creation time. Rows whose state JSON cannot be decoded are skipped with
 // their IDs collected — a corrupt row must not fail recovery of the rest.
-func (s *SQLiteTraceStore) LoadCheckpointBlobs(gctx context.Context) ([]RecoveredCheckpointBlob, []string, error) {
-	rows, err := s.db.QueryContext(gctx, `
+func LoadCheckpointBlobs(gctx context.Context, store *SQLiteTraceStore) ([]RecoveredCheckpointBlob, []string, error) {
+	rows, err := store.db.QueryContext(gctx, `
 		SELECT checkpoint_id, scope_id, seq, state_json, snapshot, created_at_unixnano
 		FROM checkpoint_snapshots ORDER BY created_at_unixnano ASC`)
 	if err != nil {
@@ -106,8 +117,8 @@ func (s *SQLiteTraceStore) LoadCheckpointBlobs(gctx context.Context) ([]Recovere
 // DeleteCheckpointBlob removes a persisted checkpoint. Restore deletes its
 // blob on success: a restored checkpoint is single-use and must not be
 // offered as restorable again by a later recovery.
-func (s *SQLiteTraceStore) DeleteCheckpointBlob(gctx context.Context, checkpointID string) error {
-	_, err := s.db.ExecContext(gctx, `DELETE FROM checkpoint_snapshots WHERE checkpoint_id = ?`, checkpointID)
+func DeleteCheckpointBlob(gctx context.Context, store *SQLiteTraceStore, checkpointID string) error {
+	_, err := store.db.ExecContext(gctx, `DELETE FROM checkpoint_snapshots WHERE checkpoint_id = ?`, checkpointID)
 	if err != nil {
 		return fmt.Errorf("delete checkpoint snapshot: %w", err)
 	}

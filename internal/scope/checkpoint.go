@@ -137,10 +137,10 @@ func (s *Scope) CreateCheckpoint(ctx context.Context, snapshot []byte) (*Checkpo
 		State:     CheckpointValid,
 	}
 
-	if limit := s.store.CheckpointBlobLimitOrDefault(); int64(len(snapshot)) > limit {
+	if limit := trace.CheckpointBlobLimitOrDefault(s.store); int64(len(snapshot)) > limit {
 		return nil, fmt.Errorf("checkpoint %s: snapshot is %d bytes, over the store's %d-byte checkpoint blob limit; store large state externally and pass a reference instead", cp.ID, len(snapshot), limit)
 	}
-	if err := s.store.PersistCheckpointBlob(ctx, cp.ID, cp.ScopeID, cp.Seq, cp.Workspace, cp.Snapshot, cp.CreatedAt); err != nil {
+	if err := trace.PersistCheckpointBlob(ctx, s.store, cp.ID, cp.ScopeID, cp.Seq, cp.Workspace, cp.Snapshot, cp.CreatedAt); err != nil {
 		return nil, fmt.Errorf("checkpoint %s: %w", cp.ID, err)
 	}
 
@@ -228,7 +228,7 @@ func (s *Scope) RestoreCheckpoint(ctx context.Context, cp *Checkpoint) ([]byte, 
 	// The persisted blob is consumed with the checkpoint: a restored
 	// checkpoint is single-use and must not resurface as restorable in a
 	// later recovery. Advisory for the same reason the restore record is.
-	if err := s.store.DeleteCheckpointBlob(ctx, cp.ID); err != nil {
+	if err := trace.DeleteCheckpointBlob(ctx, s.store, cp.ID); err != nil {
 		slog.Warn("checkpoint: delete persisted snapshot failed (advisory)", "checkpoint", cp.ID, "err", err)
 	}
 

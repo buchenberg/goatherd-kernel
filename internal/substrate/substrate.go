@@ -60,7 +60,7 @@ type Substrate interface {
 	DeclarationSchemas() []string
 	// CaptureSchemas lists the receipt schemas it emits.
 	CaptureSchemas() []string
-	// trace.Containment is the witness-level containment classification stamped
+	// Containment is the witness-level containment classification stamped
 	// into the retained context of the materialization captures.
 	Containment() trace.Containment
 	// Materialize applies the declarations and returns capture drafts.

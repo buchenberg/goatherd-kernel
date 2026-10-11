@@ -7,6 +7,7 @@ package gittest
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,7 @@ func RequireGit(t *testing.T) {
 	}
 }
 
-// Run executes a git command in dir and fails the test on error.
+// MustGit executes a git command in dir and fails the test on error.
 func MustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	out, err := run(dir, args...)
@@ -78,7 +79,13 @@ func run(dir string, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", err
+		// stderr rides along in the error: git's diagnostic is the thing
+		// a failing fixture needs, and without it the message is a bare
+		// exit status.
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("git %s: %w (stderr: %s)", strings.Join(args, " "), err, stderr.String())
+		}
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(stdout.String()), nil
 }

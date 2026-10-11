@@ -40,7 +40,7 @@ type SandboxCapabilities struct {
 	// filesystem. A false value means the backend mutates the host tree
 	// in place.
 	Isolated bool
-	// trace.Containment is the witness-level containment classification for the
+	// Containment is the witness-level containment classification for the
 	// substrate, stamped into trace witnesses and retained contexts.
 	Containment trace.Containment
 }

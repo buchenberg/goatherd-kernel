@@ -3,9 +3,11 @@ package trace
 // Completed-intent ledger for materialization (store-private table).
 //
 // The ledger write is the idempotency commit point for the materialize
-// transition. The methods and helpers are exported for the runtime layer's
-// materialize orchestrator, which stays outside this package; internal/
-// keeps them invisible to importers outside the module.
+// transition. These are package functions taking the store, deliberately
+// not methods on SQLiteTraceStore: the root package re-exports the store
+// type, and a method would surface ledger mutation in the public API. As
+// internal/ package functions they stay invisible to importers outside
+// the module.
 
 import (
 	"context"
@@ -85,11 +87,11 @@ func NewAppendIntentConflictError(msg string) *AppendIntentConflictError {
 // The store lock is held only around the query, mirroring Python's
 // _read_completed_intent; no lock is held across the substrate call or the
 // capture append in the orchestrator.
-func (s *SQLiteTraceStore) ReadCompletedMaterialization(intentID string) (string, MaterializationReceipt, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func ReadCompletedMaterialization(store *SQLiteTraceStore, intentID string) (string, MaterializationReceipt, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	var digest, receiptJSON string
-	err := s.db.QueryRow(
+	err := store.db.QueryRow(
 		"SELECT request_digest, receipt_json FROM materialization_intents WHERE materialize_intent_id = ?",
 		intentID,
 	).Scan(&digest, &receiptJSON)
@@ -111,16 +113,16 @@ func (s *SQLiteTraceStore) ReadCompletedMaterialization(intentID string) (string
 // same intent; INSERT OR IGNORE plus a digest comparison decides replays the
 // same way Python's IntegrityError branch does, without matching driver
 // error strings.
-func (s *SQLiteTraceStore) RecordCompletedMaterialization(intentID, digest string, receipt MaterializationReceipt) error {
+func RecordCompletedMaterialization(store *SQLiteTraceStore, intentID, digest string, receipt MaterializationReceipt) error {
 	receiptJSON, err := materializationReceiptJSON(receipt)
 	if err != nil {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
 
-	res, err := s.db.Exec(
+	res, err := store.db.Exec(
 		"INSERT OR IGNORE INTO materialization_intents(materialize_intent_id, request_digest, receipt_json) VALUES (?, ?, ?)",
 		intentID, digest, receiptJSON,
 	)
@@ -136,7 +138,7 @@ func (s *SQLiteTraceStore) RecordCompletedMaterialization(intentID, digest strin
 	// store-level intent idempotency guarantees identical produced ids —
 	// so replay is a silent success. Different content is a conflict.
 	var existingDigest string
-	err = s.db.QueryRow(
+	err = store.db.QueryRow(
 		"SELECT request_digest FROM materialization_intents WHERE materialize_intent_id = ?",
 		intentID,
 	).Scan(&existingDigest)
@@ -154,8 +156,8 @@ func (s *SQLiteTraceStore) RecordCompletedMaterialization(intentID, digest strin
 // DeleteMaterializationIntent removes a completed-materialization ledger row.
 // It exists so tests can simulate the crash window between the capture append
 // and the ledger write; internal/ keeps it invisible outside the module.
-func (s *SQLiteTraceStore) DeleteMaterializationIntent(gctx context.Context, intentID string) error {
-	_, err := s.db.ExecContext(gctx, `DELETE FROM materialization_intents WHERE materialize_intent_id = ?`, intentID)
+func DeleteMaterializationIntent(gctx context.Context, store *SQLiteTraceStore, intentID string) error {
+	_, err := store.db.ExecContext(gctx, `DELETE FROM materialization_intents WHERE materialize_intent_id = ?`, intentID)
 	if err != nil {
 		return fmt.Errorf("delete materialization intent: %w", err)
 	}

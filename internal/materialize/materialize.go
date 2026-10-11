@@ -91,7 +91,7 @@ func Materialize(ctx context.Context, store *trace.SQLiteTraceStore, opCtx trace
 	// Completed-intent ledger: same intent + same digest replays the stored
 	// receipt without touching the substrate; same intent + different digest
 	// is a conflict.
-	if existingDigest, receipt, found, err := store.ReadCompletedMaterialization(req.AppendIntentID); err != nil {
+	if existingDigest, receipt, found, err := trace.ReadCompletedMaterialization(store, req.AppendIntentID); err != nil {
 		return trace.MaterializationReceipt{}, err
 	} else if found {
 		if existingDigest != digest {
@@ -206,7 +206,7 @@ func Materialize(ctx context.Context, store *trace.SQLiteTraceStore, opCtx trace
 		// compare equal to its own decoded form.
 		WorldSideAnchors: trace.NonNilAnchors(result.WorldSideAnchors),
 	}
-	if err := store.RecordCompletedMaterialization(req.AppendIntentID, digest, receipt); err != nil {
+	if err := trace.RecordCompletedMaterialization(store, req.AppendIntentID, digest, receipt); err != nil {
 		return trace.MaterializationReceipt{}, err
 	}
 	return receipt, nil
