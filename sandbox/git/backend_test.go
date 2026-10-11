@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -978,5 +979,59 @@ func TestGitSandbox_AnnotateDeltaBasePinsTrees(t *testing.T) {
 	}
 	if got := gittest.ReadFile(t, repo, "branch.txt"); got != "child" {
 		t.Errorf("branch.txt = %q after a post-gc settle; the pinned delta must still land", got)
+	}
+}
+
+// TestGitSandbox_PinTreeIdempotentWhenRefUnwritable pins the concurrent-seal
+// fallback deterministically: when the update-ref cannot proceed — here a
+// read-only ref namespace, the same failure surface a sibling seal holding
+// the ref lock produces — an existing ref that already holds the right tree
+// is success, not a spurious Seal failure. The race itself is
+// scheduler-dependent, so the test forces the failure branch; chmod cannot
+// make the ref unwritable on Windows, so it is skipped there.
+func TestGitSandbox_PinTreeIdempotentWhenRefUnwritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod cannot make the ref unwritable on Windows")
+	}
+	ctx := context.Background()
+	repo := newTestRepo(t)
+	gittest.WriteFile(t, repo, "base.txt", "committed")
+	commitFiles(t, repo, "base files")
+	sb := NewLocalGitSandbox(repo)
+
+	baseline, err := sb.Capture(ctx)
+	if err != nil {
+		t.Fatalf("Capture baseline: %v", err)
+	}
+	tree, _ := baseline.Data["tree_sha"].(string)
+	if tree == "" {
+		t.Fatal("capture recorded no tree_sha")
+	}
+
+	// Pin once, then make the ref namespace unwritable so the next
+	// update-ref fails.
+	if err := sb.pinTree(ctx, tree); err != nil {
+		t.Fatalf("pinTree (first): %v", err)
+	}
+	refPath := filepath.Join(repo, ".git", "refs", "shepherd", "states", tree)
+	if _, err := os.Stat(refPath); err != nil {
+		t.Fatalf("the pin's ref file %s: %v", refPath, err)
+	}
+	dir := filepath.Dir(refPath)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod ref dir: %v", err)
+	}
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+	if err := os.Chmod(refPath, 0o444); err != nil {
+		t.Fatalf("chmod ref file: %v", err)
+	}
+
+	// Sanity: an update-ref really cannot proceed now.
+	if _, err := gittest.Run(t, repo, "update-ref", "refs/shepherd/states/"+tree, tree); err == nil {
+		t.Skip("update-ref succeeded despite the unwritable ref; the environment runs privileged and cannot exercise the fallback")
+	}
+
+	if err := sb.pinTree(ctx, tree); err != nil {
+		t.Errorf("pinTree with a correct existing ref failed: %v; a sibling's identical pin must be success", err)
 	}
 }
