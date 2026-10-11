@@ -3,9 +3,11 @@ package containerd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -13,6 +15,9 @@ import (
 
 	sbx "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/containerd/containerd/v2/core/leases"
 	"github.com/containerd/containerd/v2/core/mount"
 	"github.com/containerd/containerd/v2/core/snapshots"
@@ -21,6 +26,7 @@ import (
 	"github.com/containerd/containerd/v2/pkg/oci"
 	"github.com/containerd/errdefs"
 	"github.com/opencontainers/image-spec/identity"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -404,6 +410,116 @@ func (t *containerdTasks) initArgs() []string {
 	return []string{"/bin/sh", "-c", "sleep infinity"}
 }
 
+// initSpecOpts derives the init process's spec settings from the image config
+// blob alone.
+//
+// oci.WithImageConfig is not usable here: it resolves the image user's uid,
+// gid and supplemental groups by reading /etc/passwd and /etc/group out of
+// the unpacked rootfs in the CLIENT process (containerd 2.3+ opens the
+// overlay snapshot directories directly through fsview), and the daemon
+// creates every snapshot directory 0700 root:root — an unprivileged client
+// therefore fails NewContainer with
+//
+//	create container …: open /var/lib/containerd/…/snapshots/N/fs: permission denied
+//
+// no matter how the daemon's socket is group-shared. The config blob, by
+// contrast, is read through the daemon's content store, which socket access
+// already authorizes.
+//
+// Kept from WithImageConfig: env, working directory, and a numeric uid[:gid]
+// user. A *named* user is left unresolved (spec default: root), and a
+// uid-only user leaves the gid at the spec default (0): resolving either
+// needs /etc/passwd or /etc/group out of the rootfs — exactly the read
+// this function exists to avoid. Supplemental groups are not resolved for
+// the same reason. The sandbox contract's execs define their own
+// credentials, so the image user only affects the init process sleeping
+// in the background.
+func (t *containerdTasks) initSpecOpts(ctx context.Context, img containerd.Image) ([]oci.SpecOpts, error) {
+	ic, err := img.Config(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("containerd sandbox: read image config descriptor: %w", err)
+	}
+	// The media type check is WithImageConfig's own guard: an unexpected
+	// descriptor would otherwise unmarshal into a zero-value config —
+	// empty env, "/" cwd, root user — instead of failing loudly.
+	if !images.IsConfigType(ic.MediaType) {
+		return nil, fmt.Errorf("containerd sandbox: unknown image config media type %s", ic.MediaType)
+	}
+	blob, err := content.ReadBlob(ctx, img.ContentStore(), ic)
+	if err != nil {
+		return nil, fmt.Errorf("containerd sandbox: read image config blob: %w", err)
+	}
+	var image v1.Image
+	if err := json.Unmarshal(blob, &image); err != nil {
+		return nil, fmt.Errorf("containerd sandbox: parse image config: %w", err)
+	}
+	cfg := image.Config
+
+	opts := make([]oci.SpecOpts, 0, 3)
+	if len(cfg.Env) > 0 {
+		opts = append(opts, oci.WithEnv(cfg.Env))
+	} else {
+		// WithImageConfig's fallback: an image with no env still gets the
+		// package's default PATH, not an empty environment.
+		opts = append(opts, oci.WithDefaultPathEnv)
+	}
+	cwd := cfg.WorkingDir
+	if cwd == "" {
+		cwd = "/"
+	}
+	opts = append(opts, oci.WithProcessCwd(cwd))
+	if cfg.User != "" {
+		opts = append(opts, withNumericUser(cfg.User))
+	}
+	return opts, nil
+}
+
+// withNumericUser applies a numeric uid[:gid] image user directly onto the
+// spec. The bound is runc's, as enforced by containerd's own WithUser: ids
+// above math.MaxInt32 parse as uint32 but runc rejects them, so an
+// out-of-range id fails the spec loudly rather than silently running the
+// init as root. A *named* user, or a malformed pair such as "1000:staff",
+// is ignored as a whole — resolving a name needs /etc/passwd out of the
+// rootfs (see initSpecOpts), and half-applying a pair would give the init
+// a uid with the root group. See initSpecOpts for why names are not
+// resolved.
+func withNumericUser(user string) oci.SpecOpts {
+	const idBits = 31 // strconv bitSize for the MaxInt32 ids runc accepts
+	// parseID parses one id component. numeric reports whether the string
+	// was an id at all: a non-numeric string is the named-user fallback
+	// (zero value, no error), while an id that is out of runc's range is
+	// an error.
+	parseID := func(s, kind string) (id uint64, numeric bool, err error) {
+		v, err := strconv.ParseUint(s, 10, idBits)
+		if err == nil {
+			return v, true, nil
+		}
+		var numErr *strconv.NumError
+		if errors.As(err, &numErr) && numErr.Err == strconv.ErrRange {
+			return 0, true, fmt.Errorf("containerd sandbox: image user %q: %s %s is outside the range runc accepts", user, kind, s)
+		}
+		return 0, false, nil
+	}
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
+		uidStr, gidStr, hasGid := strings.Cut(user, ":")
+		uid, numeric, err := parseID(uidStr, "uid")
+		if err != nil || !numeric {
+			return err
+		}
+		if !hasGid {
+			s.Process.User.UID = uint32(uid)
+			return nil
+		}
+		gid, numeric, err := parseID(gidStr, "gid")
+		if err != nil || !numeric {
+			return err
+		}
+		s.Process.User.UID = uint32(uid)
+		s.Process.User.GID = uint32(gid)
+		return nil
+	}
+}
+
 // StartTask creates and starts a container generation rooted at snapshotKey.
 func (t *containerdTasks) StartTask(ctx context.Context, id, snapshotKey string) error {
 	ctx = t.ctx(ctx)
@@ -413,15 +529,18 @@ func (t *containerdTasks) StartTask(ctx context.Context, id, snapshotKey string)
 		return err
 	}
 
+	specOpts, err := t.initSpecOpts(ctx, img)
+	if err != nil {
+		return err
+	}
+	specOpts = append(specOpts, oci.WithProcessArgs(t.initArgs()...))
+
 	containerID := generationID(id, snapshotKey)
 	opts := []containerd.NewContainerOpts{
 		containerd.WithSnapshot(snapshotKey),
 		containerd.WithImage(img),
 		containerd.WithContainerLabels(map[string]string{sandboxLabel: id}),
-		containerd.WithNewSpec(
-			oci.WithImageConfig(img),
-			oci.WithProcessArgs(t.initArgs()...),
-		),
+		containerd.WithNewSpec(specOpts...),
 	}
 	if t.cfg.Runtime != "" {
 		opts = append(opts, containerd.WithRuntime(t.cfg.Runtime, nil))
