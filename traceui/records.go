@@ -78,7 +78,13 @@ func (s *Service) handleRecords(w http.ResponseWriter, r *http.Request) {
 	resp := recordsResponse{
 		Visibility:  string(slice.VisibilityProfile),
 		Mode:        mode,
+		Owners:      []ownerSummary{},
+		Records:     []recordDTO{},
 		CausalEdges: slice.CausalEdges,
+	}
+	// Arrays are never null: the client contract guarantees [] for empty.
+	if resp.CausalEdges == nil {
+		resp.CausalEdges = [][2]string{}
 	}
 	if slice.Frontier != nil {
 		resp.Frontier = &frontierDTO{
