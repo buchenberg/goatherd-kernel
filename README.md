@@ -304,16 +304,20 @@ The module is organized by component. Everything a consumer imports lives in
 the root `shepherd` package; the components behind it live under `internal/`,
 which makes the dependency direction compiler-enforced: `trace` is a leaf
 (it imports no other internal package), `sandbox` and `substrate` may depend
-on `trace` but not on each other's callers, and `materialize` sits at the top,
-orchestrating the append across substrate and store:
+on `trace` but not on each other's callers, `handles` and `materialize` sit
+above the store, `scope` orchestrates the tree over the store and substrate
+layers, and `supervision` watches the scope tree — the arrows only point down:
 
 | Package | Contents |
 |---|---|
-| `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, handles, settlement, supervisor, merge gate, recovery — plus the alias files that re-export the components |
+| `shepherd` (root) | the alias files that re-export the components — the public API is the union of the rows below |
 | `internal/trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
 | `internal/sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
 | `internal/substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `internal/materialize` | the materialize orchestrator (owns the append; substrates never do) |
+| `internal/handles` | the runtime handles — `StartTask`/`StartTaskSync`, `Run`, `ChildHandle`, `TaskControl`, the task `Registry` |
+| `internal/scope` | the scope-tree runtime — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate (proposal, reviewers, `CommitMerge`), settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
+| `internal/supervision` | the `Supervisor` rules engine — rules, interventions, `CheckCall`, the built-in guards, `ReviewMerge` |
 | `internal/gittest`, `internal/testvectors` | test support shared across packages |
 | `sandbox/containerd` | the containerd backend, a nested module (unchanged) |
 
