@@ -1,4 +1,4 @@
-package handles
+package shepherd
 
 // Handles integration test (plan 02 §6): a task tree with spawn, adopt and
 // abandon, projected from the run frontier, plus the restart law — reopen

@@ -1,4 +1,4 @@
-package handles
+package shepherd
 
 // Review-hardening tests for the runtime facade (PR #20): the history
 // vector replay — a Python-run tree driven through the Go facade must

@@ -1,4 +1,4 @@
-package handles
+package shepherd
 
 // Runtime handles (plan 02 §5), mirroring shepherd2/runtime/handles.py: a
 // synchronous facade over the store. No scheduler, no goroutine management

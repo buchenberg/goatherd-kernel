@@ -1,8 +1,7 @@
-package supervision
+package shepherd
 
 import (
 	"fmt"
-	scope "github.com/buchenberg/shepherd-kernel-go/internal/scope"
 	trace "github.com/buchenberg/shepherd-kernel-go/internal/trace"
 	"sort"
 	"strings"
@@ -47,7 +46,7 @@ type SupervisionRule struct {
 // The supervisor is stateless by default — rules that need state (error
 // rates, repetition tracking) maintain their own via closures.
 type Supervisor struct {
-	manager       *scope.ScopeManager
+	manager       *ScopeManager
 	bus           *trace.EffectBus
 	rules         []SupervisionRule
 	interventions chan Intervention
@@ -63,7 +62,7 @@ type Supervisor struct {
 // returned channel.
 //
 // Call Close() to stop the supervisor's background goroutine.
-func NewSupervisor(manager *scope.ScopeManager, bus *trace.EffectBus) *Supervisor {
+func NewSupervisor(manager *ScopeManager, bus *trace.EffectBus) *Supervisor {
 	return &Supervisor{
 		manager:       manager,
 		bus:           bus,
@@ -232,7 +231,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 //
 // The returned intervention is the rules' verdict only; acting on it is the
 // caller's decision, unlike Halt which executes immediately.
-func (s *Supervisor) ReviewMerge(scopeID string, proposal scope.MergeProposal) *Intervention {
+func (s *Supervisor) ReviewMerge(scopeID string, proposal MergeProposal) *Intervention {
 	paths := make([]string, 0, len(proposal.Changes))
 	for _, c := range proposal.Changes {
 		paths = append(paths, c.Path)
@@ -241,7 +240,7 @@ func (s *Supervisor) ReviewMerge(scopeID string, proposal scope.MergeProposal) *
 	event := trace.EffectEvent{
 		TraceOwnerID: strings.TrimPrefix(proposal.ChildScopeID, "scope:"),
 		Mode:         trace.Declaration,
-		SchemaRef:    scope.SchemaMergeProposed,
+		SchemaRef:    SchemaMergeProposed,
 		KindLabel:    "merge:proposed",
 		Payload: map[string]any{
 			"child_scope":     proposal.ChildScopeID,

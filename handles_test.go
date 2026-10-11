@@ -1,4 +1,4 @@
-package handles
+package shepherd
 
 // Runtime handle tests (plan 02 §5). The acceptance anchor is
 // TestStartTaskSyncMatchesPythonVector: the same fixture task run through

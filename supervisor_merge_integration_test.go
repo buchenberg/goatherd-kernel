@@ -17,12 +17,6 @@ import (
 	"time"
 )
 
-func fileExists(t *testing.T, dir, name string) bool {
-	t.Helper()
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
-}
-
 // withinDrafts mirrors the merge gate's drafts-prefix rule: prefix itself or
 // inside prefix/.
 func withinDrafts(p string) bool {

@@ -1,4 +1,4 @@
-package scope
+package shepherd
 
 import (
 	"context"
