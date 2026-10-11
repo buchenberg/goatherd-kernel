@@ -13,7 +13,7 @@
 // On top of the scope tree sit the task runtime ([StartTaskSync],
 // [StartTask], [Run], [TaskControl], [ChildHandle] with spawn/adopt/
 // abandon relations), the merge gate ([MergeProposal], [MergeReviewer]),
-// settlement ([RetainedOutput], [Seal], [Settle]), and the [Supervisor]
+// settlement ([RetainedOutput], [Scope.Seal], [ScopeManager.Settle]), and the [Supervisor]
 // rules engine that observes the effect bus and can inject, fork, or halt.
 //
 // The kernel's components publish as their own packages, imported directly:

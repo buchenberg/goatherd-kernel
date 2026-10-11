@@ -238,14 +238,14 @@ Read back traces by owner, causal closure, or frontier checkpoint:
 
 ```go
 // Everything an agent did
-slice, _ := store.ReadOwnerPrefix(ctx, "agent:main", 999, trace.ModeBoth)
+slice, _ := store.ReadOwnerPrefix(ctx, trace.TrustedReadContext, "agent:main", 999, trace.ModeBoth)
 
 // Causal closure from a specific record
-slice, _ = store.ReadCausalClosure(ctx, []string{"sha256:abc"}, trace.ModeBoth, "include_external_anchors")
+slice, _ = store.ReadCausalClosure(ctx, trace.TrustedReadContext, []string{"sha256:abc"}, trace.ModeBoth, "include_external_anchors")
 
 // Point-in-time checkpoint
-frontier, _ := store.PublishFrontier(ctx, trace.FrontierSpec{...})
-checkpoint, _ := store.ResolveFrontier(ctx, frontier.FrontierID, trace.ModeBoth)
+frontier, _ := store.PublishFrontier(ctx, trace.TrustedAppendContext, trace.FrontierSpec{...})
+checkpoint, _ := store.ResolveFrontier(ctx, trace.TrustedReadContext, frontier.FrontierID, trace.ModeBoth)
 ```
 
 ### Materialize recorded intents
@@ -308,9 +308,10 @@ as the leaf:
 
 ```
 trace  <-  sandbox  <-  substrate  <-  materialize
-                       ^                 ^
-                       |                 |
-            root (shepherd: scope, handles, settlement, supervision, recovery)
+  ^          ^
+  |          |
+  |       root (shepherd: scope, handles, settlement, supervision, recovery)
+  |_____|
 ```
 
 | Package | Contents |

@@ -54,9 +54,6 @@ func worktreePaths(t *testing.T, repo string) []string { return gittest.Worktree
 
 func readFile(t *testing.T, dir, name string) string { return gittest.ReadFile(t, dir, name) }
 
-// findRecords reads an owner's trace and returns the records with the given
-// schema ref, in record order. Mirrored from internal/scope's merge-gate
-// suite; test code is not API surface, so the duplication is deliberate.
 func samePath(t *testing.T, a, b string) bool { return gittest.SamePath(t, a, b) }
 
 func stagedFiles(t *testing.T, dir string) string { return gittest.StagedFiles(t, dir) }

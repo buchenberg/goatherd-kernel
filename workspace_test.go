@@ -28,7 +28,7 @@ func fileExists(t *testing.T, dir, name string) bool {
 // mustHead returns the current HEAD SHA, failing the test on error.
 
 // stagedFiles returns the staged file list, used to pin the non-mutating
-// contract of trace.Capture and Diff.
+// contract of Capture and Diff.
 func TestWorkspace_CaptureCleanRepo(t *testing.T) {
 	store := newMemStore(t)
 	repo := newTestRepo(t)

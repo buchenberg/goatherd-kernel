@@ -478,7 +478,7 @@ func conformanceCausalClosureIncludesParents(t *testing.T, open conformanceOpene
 
 // conformanceCausalParentMustExist ports test_causal_parent_must_exist.
 //
-// Python expects the trace.TraceStoreError base class; the Go error vocabulary has no
+// Python expects the TraceStoreError base class; the Go error vocabulary has no
 // shared base, and the concrete store error for a missing causal parent is
 // trace.UnknownFactError, so that is what the suite pins.
 func conformanceCausalParentMustExist(t *testing.T, open conformanceOpener) {

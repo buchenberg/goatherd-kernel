@@ -306,7 +306,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 		t.Fatalf("create parent: %v", err)
 	}
 
-	// trace.Capture the fork point once. Both variants must start from it.
+	// Capture the fork point once. Both variants must start from it.
 	forkState, err := parent.CaptureWorkspace(ctx)
 	if err != nil {
 		t.Fatalf("capture fork state: %v", err)
