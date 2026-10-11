@@ -13,8 +13,8 @@ refs under `refs/shepherd/states/` (the trace store is invisible to
 git's reachability traversal), and a same-tree different-HEAD parent is
 deliberately a *moved* workspace — select's destructive reset would
 discard the commit, so it routes to apply. Residual follow-ups recorded
-below in the phases and non-goals: the pin release lifecycle, the
-containerd capture identity, and the legacy-stash exposure.
+document-wide: the pin release lifecycle, the containerd capture
+identity, and the legacy-stash exposure.
 
 ---
 
