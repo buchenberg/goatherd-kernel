@@ -217,23 +217,48 @@ func (g *gitRunner) isRepo(ctx context.Context) bool {
 type GitSandbox struct {
 	repoPath     string
 	worktreePath string
+	// address is the durable workspace address (plan 06, U2), normalized
+	// to an absolute path at construction: the worktree path for an
+	// isolated worktree, the repository path otherwise.
+	address string
 }
 
 var _ sbx.Sandbox = (*GitSandbox)(nil)
 var _ sbx.DeltaApplier = (*GitSandbox)(nil)
 var _ sbx.DeltaBaseAnnotator = (*GitSandbox)(nil)
+var _ sbx.Addressed = (*GitSandbox)(nil)
+
+// absAddress normalizes a workspace path to an absolute one. A raw
+// relative path persisted in a trace and replayed after a restart under a
+// different working directory would address the wrong location, so the
+// address is resolved eagerly, at construction — not at read time.
+func absAddress(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
 
 // NewLocalGitSandbox returns an in-place sandbox over repoPath.
 func NewLocalGitSandbox(repoPath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath}
+	return &GitSandbox{repoPath: repoPath, address: absAddress(repoPath)}
 }
 
 // NewWorktreeSandbox returns an isolated sandbox that checks out repoPath at a
 // detached worktree in worktreePath. repoPath remains the source of truth for
 // git administrative commands; worktreePath is where workspace operations run.
+// worktreePath may be relative; the recorded address is normalized to an
+// absolute path.
 func NewWorktreeSandbox(repoPath, worktreePath string) *GitSandbox {
-	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath}
+	return &GitSandbox{repoPath: repoPath, worktreePath: worktreePath, address: absAddress(worktreePath)}
 }
+
+// Address implements sbx.Addressed: the durable workspace address, a
+// normalized absolute path — the worktree path when isolated, the
+// repository path otherwise. Recovery records it in the fork payload and
+// hands it back to the host's resolver, so an isolated child's substrate
+// is re-adoptable from the trace alone.
+func (g *GitSandbox) Address() string { return g.address }
 
 // Backend identifies the backend.
 func (g *GitSandbox) Backend() string { return "git" }

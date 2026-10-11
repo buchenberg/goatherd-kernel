@@ -1030,3 +1030,37 @@ func TestGitSandbox_PinTreeIdempotentWhenRefLocked(t *testing.T) {
 		t.Errorf("pinTree with a correct existing ref failed: %v; a sibling's identical pin must be success", err)
 	}
 }
+
+// TestGitSandbox_AddressIsNormalizedAbsolute pins the Addressed contract:
+// even a relative construction path is recorded as a normalized absolute
+// address — a raw relative path persisted in a trace and replayed after a
+// restart under a different working directory would address the wrong
+// location (plan 06, U2).
+func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
+	repo := newTestRepo(t)
+
+	if got := NewLocalGitSandbox(repo).Address(); !filepath.IsAbs(got) {
+		t.Errorf("local sandbox address %q is not absolute", got)
+	}
+
+	// A relative worktree path must still record an absolute address.
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(t.TempDir()) })
+	rel := filepath.Join(".", "rel-wt")
+	if err := os.Symlink(wt, filepath.Join(repo, "rel-wt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	got := NewWorktreeSandbox(repo, rel).Address()
+	if !filepath.IsAbs(got) {
+		t.Errorf("worktree address %q recorded from a relative path is not absolute", got)
+	}
+	if want, err := filepath.Abs(rel); err == nil && got != want {
+		t.Errorf("worktree address = %q, want the normalized %q", got, want)
+	}
+}

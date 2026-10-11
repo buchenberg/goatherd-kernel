@@ -3,12 +3,14 @@ package shepherd
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
-	"os"
-	"path/filepath"
-	"testing"
 )
 
 // reopenStore closes the store and reopens the same database file, the
@@ -80,7 +82,7 @@ func TestRecover_RestartRoundTrip(t *testing.T) {
 	reopened := reopenStore(t, store, path)
 	resolved := map[string]bool{}
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
 			resolved[scopeID] = true
 			switch scopeID {
 			case "scope:rec:parent":
@@ -260,7 +262,7 @@ func TestRecover_CheckpointStaleness(t *testing.T) {
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
 			return git.NewLocalGitSandbox(repo), nil
 		},
 	})
@@ -351,7 +353,7 @@ func TestRecover_OutputsSettleAcrossRestart(t *testing.T) {
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
 			switch scopeID {
 			case "scope:out:parent":
 				return git.NewLocalGitSandbox(repo), nil
@@ -410,7 +412,7 @@ func TestRecover_ResolverOrphanCleans(t *testing.T) {
 
 	reopened := reopenStore(t, store, path)
 	recovered, err := RecoverScopes(reopened, RecoverOptions{
-		Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
 			// The host orphan-cleans the worktree: nothing is re-adopted.
 			return nil, nil
 		},
@@ -447,5 +449,165 @@ func TestCheckpointBlobLimit(t *testing.T) {
 	}
 	if _, err := mgr.CreateCheckpoint(context.Background(), parent.ID(), []byte("short")); err != nil {
 		t.Errorf("in-limit snapshot: %v", err)
+	}
+}
+
+// --- Plan 06 Phase C: fork-record address + resolver signature ---
+
+// TestRecover_ResolverReceivesRecordedAddress is plan 06 U2's law: an
+// isolated child's fork record carries its sandbox's durable address, and
+// recovery hands it to the resolver — the resolver re-adopts the worktree
+// from the kernel record alone. A root resolves with an empty path, and a
+// shared child is never resolved at all: it inherits the parent's
+// re-adopted sandbox, the same contract as before.
+func TestRecover_ResolverReceivesRecordedAddress(t *testing.T) {
+	store, path := fileStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	parent, err := mgr.Create("rec:addr:parent", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	_, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "rec:addr:child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "feature.txt"), []byte("pre-crash work"), 0o644); err != nil {
+		t.Fatalf("child writes: %v", err)
+	}
+	if _, err := mgr.Fork(parent.ID(), "rec:addr:shared", nil); err != nil {
+		t.Fatalf("fork shared: %v", err)
+	}
+
+	// The isolated fork record carries the worktree's absolute address;
+	// the shared fork record carries none.
+	for _, rec := range findRecords(t, store, "rec:addr:parent", SchemaScopeForked) {
+		child, _ := rec.Body.Payload["child_owner"].(string)
+		pathRec, hasPath := rec.Body.Payload["sandbox_path"].(string)
+		switch child {
+		case "rec:addr:child":
+			if !hasPath || pathRec != wtPath {
+				t.Errorf("isolated fork record sandbox_path = %q (present %v), want the worktree address %q", pathRec, hasPath, wtPath)
+			}
+			if !filepath.IsAbs(pathRec) {
+				t.Errorf("recorded sandbox_path %q is not absolute", pathRec)
+			}
+		case "rec:addr:shared":
+			if _, ok := rec.Body.Payload["sandbox_path"]; ok {
+				t.Errorf("shared fork record carries sandbox_path %v; a shared child has no substrate of its own", rec.Body.Payload["sandbox_path"])
+			}
+		}
+	}
+
+	// Crash: reopen and recover. The resolver re-adopts the child from the
+	// recorded address alone — the worktree path comes from the record,
+	// not from host memory of the fork.
+	reopened := reopenStore(t, store, path)
+	calls := map[string][2]string{}
+	recovered, err := RecoverScopes(reopened, RecoverOptions{
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
+			calls[scopeID] = [2]string{backend, path}
+			switch scopeID {
+			case "scope:rec:addr:parent":
+				return git.NewLocalGitSandbox(repo), nil
+			case "scope:rec:addr:child":
+				return git.NewWorktreeSandbox(repo, path), nil
+			}
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RecoverScopes: %v", err)
+	}
+
+	if got, ok := calls["scope:rec:addr:child"]; !ok {
+		t.Error("the isolated child was not resolved")
+	} else if got[0] != "git" || got[1] != wtPath {
+		t.Errorf("child resolver call = (backend %q, path %q), want (git, %q)", got[0], got[1], wtPath)
+	}
+	if got, ok := calls["scope:rec:addr:parent"]; !ok {
+		t.Error("the root was not resolved")
+	} else if got[0] != "" || got[1] != "" {
+		t.Errorf("root resolver call = (backend %q, path %q), want both empty — a root has no record", got[0], got[1])
+	}
+	if _, resolved := calls["scope:rec:addr:shared"]; resolved {
+		t.Error("the shared child was resolved; it must inherit the parent's re-adopted sandbox with no resolver call")
+	}
+
+	rc, ok := recovered.Get("scope:rec:addr:child")
+	if !ok {
+		t.Fatal("child not recovered")
+	}
+	if rc.Sandbox() == nil {
+		t.Fatal("recovered child has no sandbox")
+	}
+	if ad, ok := rc.Sandbox().(sandbox.Addressed); ok && ad.Address() != wtPath {
+		t.Errorf("re-adopted sandbox address = %q, want the recorded worktree %q", ad.Address(), wtPath)
+	}
+	// The pre-crash work is intact through the re-adopted substrate: the
+	// recovered scope seals over the re-adopted worktree, and the frozen
+	// change list carries the pre-crash file as the branch's change.
+	out, err := recovered.Seal(ctx, rc.ID())
+	if err != nil {
+		t.Fatalf("seal through the re-adopted worktree: %v", err)
+	}
+	found := false
+	for _, c := range out.Changes() {
+		if c.Path == "feature.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("sealed changes over the re-adopted worktree lost the pre-crash content: %+v", out.Changes())
+	}
+}
+
+// TestRecover_RelativeRecordedPathRefuses covers the address-durability
+// rule: a fork record that carries a non-absolute sandbox_path fails the
+// recovery loudly before the resolver sees it, because a relative path
+// replayed under a different working directory would address the wrong
+// location.
+func TestRecover_RelativeRecordedPathRefuses(t *testing.T) {
+	store, path := fileStore(t)
+	ctx := context.Background()
+
+	// A hand-crafted legacy-shaped record: an isolated git fork whose
+	// recorded address is relative. The API can no longer produce this —
+	// construction normalizes to absolute — so it is appended directly,
+	// standing in for a corrupt or pre-normalization trace.
+	if _, err := store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
+		AppendIntentID: "recovery-test:relative-path",
+		Groups: []trace.AppendGroup{{
+			TraceOwnerID: "rec:rel:parent",
+			FactDrafts: []trace.RecordDraft{{
+				Mode:      trace.Declaration,
+				SchemaRef: SchemaScopeForked,
+				KindLabel: "scope:forked",
+				Payload: map[string]any{
+					"child_owner":     "rec:rel:child",
+					"isolated":        true,
+					"sandbox_backend": "git",
+					"sandbox_path":    "relative/wt",
+				},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("append fork record: %v", err)
+	}
+
+	reopened := reopenStore(t, store, path)
+	childResolved := false
+	_, err := RecoverScopes(reopened, RecoverOptions{
+		Resolver: func(scopeID, backend, path string) (sandbox.Sandbox, error) {
+			if scopeID == "scope:rec:rel:child" {
+				childResolved = true
+			}
+			return nil, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("RecoverScopes with a relative recorded path: %v, want a loud not-absolute refusal", err)
+	}
+	if childResolved {
+		t.Error("the child was resolved despite the invalid recorded path; validation must fail before the resolver sees it")
 	}
 }

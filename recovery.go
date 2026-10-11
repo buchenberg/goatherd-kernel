@@ -3,10 +3,12 @@ package shepherd
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"path/filepath"
+	"strings"
+
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
-	"log/slog"
-	"strings"
 )
 
 // Recovery: rebuild the scope tree, checkpoints, and retained outputs from
@@ -22,23 +24,29 @@ import (
 // RecoverOptions configures scope recovery.
 type RecoverOptions struct {
 	// Sandbox re-adoption. Recovery calls it for every recovered root scope
-	// and every isolated child, with the backend the trace recorded (empty
-	// for roots, which have no record). Return (nil, nil) to recover the
+	// and every isolated child, with the backend and durable address the
+	// trace recorded (both empty for roots, which have no record; the path
+	// empty for isolated children whose backend does not implement the
+	// Addressed capability). Return (nil, nil) to recover the
 	// scope without a sandbox — deliberate non-adoption, not an error: the
 	// host uses it to orphan-clean worktrees it does not want back. An
 	// error fails the recovery: half-adopted sandboxes are worse than none.
 	//
 	// Shared-sandbox children are never resolved: they inherit the parent's
 	// re-adopted sandbox, exactly as they inherited it at fork time.
-	Resolver func(scopeID, backend string) (sandbox.Sandbox, error)
+	//
+	// The path is a normalized absolute address recorded at fork time
+	// (plan 06, U2); a recorded non-absolute path fails the recovery
+	// before the resolver sees it.
+	Resolver func(scopeID, backend, path string) (sandbox.Sandbox, error)
 }
 
 // resolve is the nil-safe form of opts.Resolver.
-func (o RecoverOptions) resolve(scopeID, backend string) (sandbox.Sandbox, error) {
+func (o RecoverOptions) resolve(scopeID, backend, path string) (sandbox.Sandbox, error) {
 	if o.Resolver == nil {
 		return nil, nil
 	}
-	return o.Resolver(scopeID, backend)
+	return o.Resolver(scopeID, backend, path)
 }
 
 // forkEdge is one recovered fork: parent → child, with what the child needs.
@@ -47,6 +55,7 @@ type forkEdge struct {
 	childOwner  string
 	isolated    bool
 	backend     string
+	path        string
 	baseline    trace.WorkspaceState
 	forkPoint   string
 }
@@ -171,7 +180,7 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 		}(); isChild {
 			continue
 		}
-		sb, err := opts.resolve(scope.id, "")
+		sb, err := opts.resolve(scope.id, "", "")
 		if err != nil {
 			return nil, fmt.Errorf("recover scope %s: re-adopt sandbox: %w", scope.id, err)
 		}
@@ -189,7 +198,14 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 			continue
 		}
 		if edge := edgeFor(edges, scope.ownerID); edge != nil && edge.isolated {
-			sb, err := opts.resolve(scope.id, edge.backend)
+			// A recorded address must be absolute: a relative path
+			// replayed after a restart under a different working
+			// directory would address the wrong location, and the
+			// resolver cannot tell.
+			if edge.path != "" && !filepath.IsAbs(edge.path) {
+				return nil, fmt.Errorf("recover scope %s: recorded sandbox_path %q is not absolute", scope.id, edge.path)
+			}
+			sb, err := opts.resolve(scope.id, edge.backend, edge.path)
 			if err != nil {
 				return nil, fmt.Errorf("recover scope %s: re-adopt sandbox: %w", scope.id, err)
 			}
@@ -262,6 +278,7 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 			isolated:    rec.Payload["isolated"] == true,
 		}
 		edge.backend, _ = rec.Payload["sandbox_backend"].(string)
+		edge.path, _ = rec.Payload["sandbox_path"].(string)
 		if baselineRaw, ok := rec.Payload["baseline"].(map[string]any); ok {
 			edge.baseline = workspaceStateFromPayload(baselineRaw)
 		}

@@ -109,8 +109,16 @@ func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, is
 	}
 
 	backend := ""
+	address := ""
 	if isolated && sb != nil {
 		backend = sb.Backend()
+		// The capability check lives here, not in forkWithBaseline: only
+		// this layer holds the sandbox object; forkWithBaseline receives
+		// the extracted strings. An address is part of the fork record
+		// only when the backend implements Addressed.
+		if ad, ok := sb.(sandbox.Addressed); ok {
+			address = ad.Address()
+		}
 	}
 
 	m.mu.Lock()
@@ -121,7 +129,7 @@ func (m *ScopeManager) forkScope(parentID, childOwnerID string, snapshot any, is
 		return nil, fmt.Errorf("scope %s already exists", childID)
 	}
 
-	child, err := parent.forkWithBaseline(childOwnerID, snapshot, baseline, isolated, backend)
+	child, err := parent.forkWithBaseline(childOwnerID, snapshot, baseline, isolated, backend, address)
 	if err != nil {
 		return nil, err
 	}
