@@ -169,16 +169,17 @@ Define rules that watch for dangerous patterns and intervene automatically:
 
 ```go
 sup := supervisor.NewSupervisor(mgr, bus)
-sup.AddRule(supervisor.DestructiveToolRule())          // block rm/mv/chmod
+sup.AddRule(supervisor.DestructiveToolRule())          // advisory warning on destructive calls
+sup.AddRule(supervisor.DestructiveToolGuard())         // deny blockable destructive calls at check time
 sup.AddRule(supervisor.HighErrorRateRule(0.5, 10))     // alert at 50% errors
 sup.AddRule(supervisor.StuckDetectionRule(3))          // detect loops
 sup.Start("orchestrator")
 
 for iv := range sup.Interventions() {
     switch iv.Type {
-    case shepherd.InterventionInject:
+    case supervisor.InterventionInject:
         sup.Inject(iv.ScopeID, "try a different approach")
-    case shepherd.InterventionHalt:
+    case supervisor.InterventionHalt:
         sup.Halt(iv.ScopeID)
     }
 }
@@ -739,20 +740,20 @@ vectors — so a Go-written trace is readable by `shepherd2` and vice versa.
 ```go
 reg := task.NewRegistry()
 reg.Register("MyTask", func(c *task.TaskControl) (map[string]any, error) {
-    c.Publish("note", map[string]any{"msg": "working"})
-    child, err := c.Spawn("LeafTask", inputs, reg)
+    c.Publish(ctx, "note", map[string]any{"msg": "working"})
+    child, err := c.Spawn(ctx, "LeafTask", inputs, reg)
     if err != nil { return nil, err }
     exec, err := c.AwaitTerminal(ctx, child)
     return map[string]any{"child": exec.ExecutionID}, nil
 })
 
-run, err := task.StartTaskSync(store, reg, "MyTask", "run:fixed-id", inputs)
+run, err := task.StartTaskSync(ctx, store, reg, "MyTask", "run:fixed-id", inputs)
 exec, err := run.Wait(ctx)      // terminal projection: succeeded / failed
 
 // or async: StartTask returns a live handle; Wait blocks until terminal
 run, err = task.StartTask(ctx, store, reg, "MyTask", "", inputs)
 
-history, err := shepherd.ProjectEffectiveHistoryFromStore(store, reader, cutoff)
+history, err := trace.ProjectEffectiveHistoryFromStore(ctx, store, reader, cutoff)
 // root execution + active children (spawned/adopted; abandoned drops) + published facts
 ```
 

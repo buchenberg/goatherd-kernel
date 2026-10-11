@@ -629,8 +629,9 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
       (b) split the flat `shepherd` package (kernel / runtime / backends
       share one namespace today).
       *(Executed for the leaves: the task runtime moved to `task` and the
-      rules engine to `supervisor` — both one-directional dependencies on
-      the hub. The hub itself (scope tree, merge gate, settlement,
+      rules engine to `supervisor`. The supervisor is a one-directional
+      dependency on the hub; `task` imports only `trace` — a pure
+      trace-store facade with no root import. The hub itself (scope tree, merge gate, settlement,
       recovery) stays as the root package deliberately:
       `ScopeManager` owns the merge/settlement verbs and recovery
       rebuilds its internals, so a further split would need interface

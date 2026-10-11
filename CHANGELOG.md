@@ -13,9 +13,10 @@ contain breaking changes, which are called out below.
   `ChildHandle`) and `supervisor` (`Supervisor`, `SupervisionRule`,
   `Intervention*`, the built-in rules). This is the §13 pre-freeze packaging
   decision (b): the root `shepherd` package now owns the scope tree, the
-  merge gate, settlement, and recovery — the hub the extracted packages
-  depend on — while the two one-directional leaves stand beside
-  `sandbox/git` and `sandbox/containerd` as siblings. Migration:
+  merge gate, settlement, and recovery. The supervisor depends on that root
+  hub one-way; the task package imports only `trace` — a pure trace-store
+  facade — and the two stand beside `sandbox/git` and `sandbox/containerd`
+  as sibling packages. Migration:
   `shepherd.NewSupervisor` → `supervisor.NewSupervisor`,
   `shepherd.StartTaskSync` → `task.StartTaskSync`, and so on.
   Recovery deliberately stays in the root package: it rebuilds the
