@@ -56,8 +56,11 @@ func readFile(t *testing.T, dir, name string) string { return gittest.ReadFile(t
 
 func samePath(t *testing.T, a, b string) bool { return gittest.SamePath(t, a, b) }
 
+// stagedFiles returns the staged file list, used to pin the non-mutating
+// contract of Capture and Diff.
 func stagedFiles(t *testing.T, dir string) string { return gittest.StagedFiles(t, dir) }
 
+// mustHead returns the current HEAD SHA, failing the test on error.
 func mustHead(t *testing.T, dir string) string {
 	t.Helper()
 	sha, err := gittest.HeadSHA(t, dir)

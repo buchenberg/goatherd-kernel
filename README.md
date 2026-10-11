@@ -310,8 +310,9 @@ as the leaf:
 trace  <-  sandbox  <-  substrate  <-  materialize
   ^          ^
   |          |
-  |       root (shepherd: scope, handles, settlement, supervision, recovery)
-  |_____|
+  +----------+
+       |
+  root (shepherd: scope, handles, settlement, supervision, recovery)
 ```
 
 | Package | Contents |
