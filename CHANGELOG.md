@@ -4,6 +4,47 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.11.0] - unreleased
+
+The module is now organized as public component packages. The component
+extraction first landed everything behind `internal/` with the root package
+re-exporting it through aliases; that stage is unreleased and never tagged,
+so the only public change is this one: the component symbols moved from the
+root package to their own import paths. Behavior, digests, and the test
+suite are unchanged — every vector, law, and conformance test passes
+identically.
+
+### Changed (breaking: import paths)
+
+| v0.10 (root package) | v0.11 |
+|---|---|
+| `shepherd.SQLiteTraceStore`, `NewSQLiteTraceStore`, `Append`, `PreviewRecordIDs`, `PublishCut`/`PublishFrontier`, the `Read*`/`Resolve*` reads, `RecordDraft`, `Record`, `AppendBatch`/`Group`/`Context`/`Receipt`, `ReadContext`, `EffectBus`, `NewEffectBus`, `CanonicalJSON*`, `CanonicalDigest`, the `Execution*`/`Relation*`/`Project*` vocabulary, the `Schema*` consts, `Witness*`, `Frontier*`, `Slice`, `Visibility*`, `Mode*`, `Contain*`, `Op*`, `Trusted*Context`, `WorkspaceState` | `trace.` (same names) |
+| `shepherd.Sandbox`, `SandboxSpec`, `SandboxCapabilities`, `ExecRequest`/`ExecResult`, `NewLocalGitSandbox`, `NewWorktreeSandbox`, `GitSandbox`, `GitSandboxConfig`, `OpenSandbox`, `RegisterSandbox`, `SandboxBackends`, `DeltaApplier`, `ErrUnsupported`, `ErrNoSandbox`, `ErrUnknownSandboxBackend` | `sandbox.` (same names) |
+| `shepherd.Substrate`, `SubstrateRegistry`, `NewSubstrateRegistry`, `NewEchoSubstrate`, `NewKVSubstrate`, `NewWorkspaceSubstrate`, `EchoSubstrate`, `KVSubstrate`, `WorkspaceSubstrate`, `ErrUnknownSubstrate`, `SubstrateError`, the `SchemaWorkspace*`/`KV*` consts | `substrate.` (same names) |
+| `shepherd.Materialize`, `MaterializationRequest`, `MaxOwnerOrdinal` | `materialize.` (same names) |
+
+Unchanged at the root package: `Scope`, `NewScope`, `ScopeManager`,
+checkpoints, handles (`StartTaskSync`, `StartTask`, `Run`, `TaskControl`,
+`ChildHandle`, `Registry`), settlement (`RetainedOutput`, `Seal`, `Settle`),
+the merge gate (`MergeProposal`, `MergeReviewer`), `RecoverScopes`, and the
+`Supervisor` rules engine.
+
+### Added
+
+- Package documentation for every published package, including the root
+  package's first package comment (`doc.go`).
+- The trace store's checkpoint-blob persistence, materialization ledger,
+  and schema-scan helpers publish with `trace` as advanced surfaces
+  (recovery and the orchestrator call them across the now-public package
+  boundary).
+
+### Nested module
+
+`sandbox/containerd` (v0.2.0, same release train): the adapter imports the
+component packages at their new paths and carries a relative `replace` to
+the in-repo core so it always builds against the core it ships with; its
+`go.mod` requires core `v0.11.0` once tagged.
+
 ## [sandbox/containerd/v0.1.5] - 2026-10-10
 
 The nested module repins to core `v0.10.0` (from `v0.7.0`), which is what

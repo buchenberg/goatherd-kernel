@@ -25,17 +25,17 @@ go get github.com/buchenberg/shepherd-kernel-go
 Every tool call, every model response, every file mutation becomes a durable, content-addressed record in a causal DAG:
 
 ```go
-store, _ := shepherd.NewSQLiteTraceStore("trace.sqlite")
+store, _ := trace.NewSQLiteTraceStore("trace.sqlite")
 ctx := context.Background()
 defer store.Close(context.Background())
 
 // Record a tool call intent
-receipt, _ := store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+receipt, _ := store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
     AppendIntentID: "session:tool:1",
-    Groups: []shepherd.AppendGroup{{
+    Groups: []trace.AppendGroup{{
         TraceOwnerID: "agent:main",
-        FactDrafts: []shepherd.RecordDraft{{
-            Mode:      shepherd.Declaration,
+        FactDrafts: []trace.RecordDraft{{
+            Mode:      trace.Declaration,
             SchemaRef: "app.tool.bash.v1",
             Payload:   map[string]any{"cmd": "go test ./..."},
         }},
@@ -43,13 +43,13 @@ receipt, _ := store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBa
 })
 
 // Record the outcome
-store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+store.Append(ctx, trace.TrustedAppendContext, trace.AppendBatch{
     AppendIntentID: "session:result:1",
-    Groups: []shepherd.AppendGroup{{
+    Groups: []trace.AppendGroup{{
         TraceOwnerID:  "agent:main",
         CausalParents: receipt.FactIDs,
-        FactDrafts: []shepherd.RecordDraft{{
-            Mode:      shepherd.Capture,
+        FactDrafts: []trace.RecordDraft{{
+            Mode:      trace.Capture,
             SchemaRef: "app.tool.bash.v1.applied",
             Payload:   map[string]any{"success": true, "duration": "2.3s"},
         }},
@@ -62,7 +62,7 @@ store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 Subscribe to the effect bus to receive events as they happen — no polling, no SQLite reads:
 
 ```go
-bus := shepherd.NewEffectBus(64)
+bus := trace.NewEffectBus(64)
 store.WithBus(bus)
 
 ch := bus.Subscribe("my-watcher")
@@ -81,7 +81,7 @@ Create isolated execution branches for speculative work. Fork records the branch
 mgr := shepherd.NewScopeManager(store)
 
 // A root scope carries the workspace it operates on.
-parent, _ := mgr.Create("agent:main", shepherd.NewLocalGitSandbox(repoPath))
+parent, _ := mgr.Create("agent:main", sandbox.NewLocalGitSandbox(repoPath))
 child, _ := mgr.Fork(parent.ID(), "agent:experimental", nil)
 
 // Child runs in isolation...
@@ -127,7 +127,7 @@ re-adopt and which to orphan-clean:
 
 ```go
 mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{
-    Resolver: func(scopeID, backend string) (shepherd.Sandbox, error) {
+    Resolver: func(scopeID, backend string) (sandbox.Sandbox, error) {
         return mySandboxFor(scopeID) // nil = recover this scope causally only
     },
 })
@@ -150,8 +150,8 @@ Worktree allocates a detached `git worktree` per scope, so a speculative branch
 cannot touch the parent tree and `Discard` becomes a physical rollback:
 
 ```go
-sb := shepherd.NewWorktreeSandbox(repoPath, worktreePath)
-sb.Create(ctx, shepherd.SandboxSpec{})
+sb := sandbox.NewWorktreeSandbox(repoPath, worktreePath)
+sb.Create(ctx, sandbox.SandboxSpec{})
 defer sb.Destroy(ctx)
 
 // Scope-scoped ownership: the sandbox is destroyed by Discard/Merge/Halt.
@@ -238,14 +238,14 @@ Read back traces by owner, causal closure, or frontier checkpoint:
 
 ```go
 // Everything an agent did
-slice, _ := store.ReadOwnerPrefix(ctx, "agent:main", 999, shepherd.ModeBoth)
+slice, _ := store.ReadOwnerPrefix(ctx, trace.TrustedReadContext, "agent:main", 999, trace.ModeBoth)
 
 // Causal closure from a specific record
-slice, _ = store.ReadCausalClosure(ctx, []string{"sha256:abc"}, shepherd.ModeBoth, "include_external_anchors")
+slice, _ = store.ReadCausalClosure(ctx, trace.TrustedReadContext, []string{"sha256:abc"}, trace.ModeBoth, "include_external_anchors")
 
 // Point-in-time checkpoint
-frontier, _ := store.PublishFrontier(ctx, shepherd.FrontierSpec{...})
-checkpoint, _ := store.ResolveFrontier(ctx, frontier.FrontierID, shepherd.ModeBoth)
+frontier, _ := store.PublishFrontier(ctx, trace.TrustedAppendContext, trace.FrontierSpec{...})
+checkpoint, _ := store.ResolveFrontier(ctx, trace.TrustedReadContext, frontier.FrontierID, trace.ModeBoth)
 ```
 
 ### Materialize recorded intents
@@ -256,16 +256,16 @@ declarations through a typed substrate and appending the receipts as
 captures, so the trace describes both sides of the transition:
 
 ```go
-registry := shepherd.NewSubstrateRegistry()
-registry.Register(shepherd.NewWorkspaceSubstrate(sandbox))  // or a KV, echo, custom substrate
+registry := substrate.NewSubstrateRegistry()
+registry.Register(substrate.NewWorkspaceSubstrate(sandbox))  // or a KV, echo, custom substrate
 
-receipt, err := shepherd.Materialize(ctx, store,
-    appendCtx.ToOperationContext(shepherd.OpMaterialize),
-    shepherd.MaterializationRequest{
+receipt, err := materialize.Materialize(ctx, store,
+    appendCtx.ToOperationContext(trace.OpMaterialize),
+    materialize.MaterializationRequest{
         AppendIntentID:            "run:42:materialize",
         TargetTraceOwnerID:        "agent:main",
         TargetRecordIDs:           declarationIDs, // workspace.file.write.v1 records
-        TargetThroughOwnerOrdinal: shepherd.MaxOwnerOrdinal,
+        TargetThroughOwnerOrdinal: materialize.MaxOwnerOrdinal,
     },
     registry,
 )
@@ -293,77 +293,44 @@ half-applying. Outcome honesty is the contract: `clean_failure` is claimed
 only when nothing was attempted — a failure *after* a sandbox call was made
 is reported as `split_state` even when no capture landed, because backends
 write files in chunks and the world may have changed without a trace. The
-reference KV substrate (`shepherd.NewKVSubstrate`) keeps a world-side SQLite
+reference KV substrate (`substrate.NewKVSubstrate`) keeps a world-side SQLite
 store separate from the trace, and the echo substrate is the test fixture.
 
 ## Architecture
 
 ### Package layout
 
-The module is organized by component. Everything a consumer imports lives in
-the root `shepherd` package; the components behind it live under `internal/`,
-which keeps them unimportable outside the module. Within the module the
-dependency graph is acyclic by construction, with `trace` as the leaf:
+The module is organized by component, and the component packages are
+public: import them directly. The root `shepherd` package is the runtime
+layer — the scope tree, handles, settlement, supervision, and recovery
+that compose the components. The dependency graph is acyclic, with `trace`
+as the leaf:
 
 ```
 trace  <-  sandbox  <-  substrate  <-  materialize
-  ^           ^
-  |           |
-handles     scope  <-  supervision
+  ^          ^
+  |          |
+  +----------+
+       |
+  root (shepherd: scope, handles, settlement, supervision, recovery)
 ```
 
 | Package | Contents |
 |---|---|
-| `shepherd` (root) | the alias files that re-export the components — the public API is the union of the component rows below, not the test-support or nested-module rows |
-| `internal/trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
-| `internal/sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
-| `internal/substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
-| `internal/materialize` | the materialize orchestrator (owns the append; substrates never do) |
-| `internal/handles` | the runtime handles — `StartTask`/`StartTaskSync`, `Run`, `ChildHandle`, `TaskControl`, the task `Registry` |
-| `internal/scope` | the scope-tree runtime — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate (proposal, reviewers, `CommitMerge`), settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
-| `internal/supervision` | the `Supervisor` rules engine — rules, interventions, `CheckCall`, the built-in guards, `ReviewMerge` |
+| `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, workspace operations, handles (`StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`), the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`), the `Supervisor` rules engine |
+| `trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
+| `sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
+| `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
+| `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `internal/gittest`, `internal/testvectors` | test support shared across packages |
-| `sandbox/containerd` | the containerd backend, a nested module (unchanged) |
+| `sandbox/containerd` | the containerd backend, a nested module |
 
-The re-exports are type aliases and value aliases, so existing imports keep
-compiling unchanged.
-
-```
-┌──────────────────────────────────────────────────┐
-│  Orchestrator                                    │
-│  ┌────────────────────────────────────────────┐  │
-│  │ Supervisor                                 │  │
-│  │  Rules → Interventions channel             │  │
-│  └──────────┬─────────────────────────────────┘  │
-│             │                                    │
-│  ┌──────────▼─────────────────────────────────┐  │
-│  │ ScopeManager                               │  │
-│  │  Fork / ForkIsolated / Merge / Discard     │  │
-│  └────┬──────────────────────────────┬────────┘  │
-│       │                              │           │
-│  ┌────▼──────────────────┐  ┌────────▼────────┐  │
-│  │ Sandbox (interface)   │  │ EffectBus       │  │
-│  │  Capture / Apply /    │  │  Non-blocking   │  │
-│  │  Diff / Exec          │  │  pub/sub        │  │
-│  │  git · containerd*    │  └────────┬────────┘  │
-│  └───────────────────────┘           │           │
-│  ┌───────────────────────────────────▼────────┐  │
-│  │ SQLiteTraceStore                           │  │
-│  │  Content-addressed, append-only            │  │
-│  └────────────────────────────────────────────┘  │
-│                                                  │
-│  ┌────────────────────────────────────────────┐  │
-│  │ Materialize                                │  │
-│  │  Orchestrates append across substrate &    │  │
-│  │  store; substrates never append directly   │  │
-│  └────────────────────────────────────────────┘  │
-│                                                  │
-│  ┌────────────────────────────────────────────┐  │
-│  │ Substrate (interface)                      │  │
-│  │  Echo · KV · Workspace                     │  │
-│  └────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────┘
-```
+The v0.11 package move broke imports that used the root package for
+component symbols (`shepherd.NewSQLiteTraceStore` -> `trace.NewSQLiteTraceStore`,
+`shepherd.NewLocalGitSandbox` -> `sandbox.NewLocalGitSandbox`, and so on);
+the CHANGELOG's v0.11.0 section carries the full migration table. Runtime
+symbols (`shepherd.NewScope`, `shepherd.NewScopeManager`, ...) are
+unchanged.
 
 \* `git` is built into the core module; the containerd backend is a nested
 module (`sandbox/containerd`) that needs a Linux environment at runtime —
@@ -480,7 +447,7 @@ destroy-keeps-states acceptance sequence — is **9/9 green** on this code
 (2026-10-10, released as `sandbox/containerd/v0.1.4`).
 
 **Delta merges.** Since `sandbox/containerd/v0.1.5` the backend implements
-`shepherd.DeltaApplier`, so settlement's apply verb (`SettleApply`) works on
+`sandbox.DeltaApplier`, so settlement's apply verb (`SettleApply`) works on
 containerd scopes: a sealed output merges onto a parent whose workspace moved
 past the fork, without resetting it. `Apply` records the applied state's git
 HEAD as the sandbox's delta base and every `Capture` carries a git binary
@@ -489,7 +456,7 @@ level (`git merge-tree --write-tree`) in the object database, so a conflicting
 delta refuses with the working tree untouched — no markers, no partial
 application — and a clean one lands as unstaged changes that leave the
 caller's staged work alone. The package also self-registers with
-`shepherd.OpenSandbox` under `"containerd"` when imported, so
+`sandbox.OpenSandbox` under `"containerd"` when imported, so
 config-driven backend selection needs no host wiring beyond the import.
 The merge machinery is pinned live by
 `TestLive_ApplyDeltaMergesOntoMovedParent` and
@@ -520,22 +487,22 @@ A rule-based engine that watches the effect bus and emits **interventions** when
 ### Store
 
 ```go
-store, err := shepherd.NewSQLiteTraceStore(path)  // ":memory:" for in-memory
+store, err := trace.NewSQLiteTraceStore(path)  // ":memory:" for in-memory
 defer store.Close(context.Background())
 store.WithBus(bus)  // optional: attach effect bus
 
-receipt, err := store.Append(ctx, shepherd.TrustedAppendContext, batch)  // Append records
-slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, owner, through, modeFilter)
-slice, err := store.ReadCausalClosure(ctx, shepherd.TrustedReadContext, roots, modeFilter, closurePolicy)
-frontier, err := store.PublishFrontier(ctx, shepherd.TrustedAppendContext, spec)  // Immutable checkpoint
-slice, err := store.ResolveFrontier(ctx, shepherd.TrustedReadContext, frontierId, modeFilter)
-ids, err := store.PreviewRecordIDs(ctx, shepherd.TrustedAppendContext, batch)  // Dry-run append
+receipt, err := store.Append(ctx, trace.TrustedAppendContext, batch)  // Append records
+slice, err := store.ReadOwnerPrefix(ctx, trace.TrustedReadContext, owner, through, modeFilter)
+slice, err := store.ReadCausalClosure(ctx, trace.TrustedReadContext, roots, modeFilter, closurePolicy)
+frontier, err := store.PublishFrontier(ctx, trace.TrustedAppendContext, spec)  // Immutable checkpoint
+slice, err := store.ResolveFrontier(ctx, trace.TrustedReadContext, frontierId, modeFilter)
+ids, err := store.PreviewRecordIDs(ctx, trace.TrustedAppendContext, batch)  // Dry-run append
 ```
 
 ### Effect Bus
 
 ```go
-bus := shepherd.NewEffectBus(bufferSize)  // 0 = default (64)
+bus := trace.NewEffectBus(bufferSize)  // 0 = default (64)
 defer bus.Close()
 
 ch := bus.Subscribe("watcher-id")     // <-chan EffectEvent
@@ -619,16 +586,16 @@ register factories and the host resolves a configured name:
 // Config-driven construction: the git backend self-registers in-core, and
 // the containerd backend self-registers when its package is imported
 // (sandbox/containerd v0.1.5+ pins a registry-carrying core).
-sb, err := shepherd.OpenSandbox("git", shepherd.GitSandboxConfig{RepoPath: repoPath})
+sb, err := sandbox.OpenSandbox("git", sandbox.GitSandboxConfig{RepoPath: repoPath})
 
-_, err = shepherd.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
-backends := shepherd.SandboxBackends()          // sorted names, for config diagnostics
+_, err = sandbox.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
+backends := sandbox.SandboxBackends()          // sorted names, for config diagnostics
 
 // Direct constructors remain available:
-inPlace := shepherd.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
-worktree := shepherd.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
+inPlace := sandbox.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
+worktree := sandbox.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
 
-err = sb.Create(ctx, shepherd.SandboxSpec{})    // OpenSandbox does NOT provision; Create is the lifecycle step
+err = sb.Create(ctx, sandbox.SandboxSpec{})    // OpenSandbox does NOT provision; Create is the lifecycle step
 defer sb.Destroy(ctx)
 
 ws, err := sb.Capture(ctx)
@@ -657,22 +624,22 @@ err := sup.Halt(scopeID)
 ### Materialization
 
 ```go
-registry := shepherd.NewSubstrateRegistry()
+registry := substrate.NewSubstrateRegistry()
 err := registry.Register(substrate)               // Substrate interface: SubstrateRef,
                                                   // DeclarationSchemas, CaptureSchemas,
                                                   // Containment, Materialize
 substrate, err := registry.Get(substrateRef)      // ErrUnknownSubstrate when missing
 
-receipt, err := shepherd.Materialize(ctx, store, opCtx, req, registry)
-// opCtx.Operation must be shepherd.OpMaterialize
+receipt, err := materialize.Materialize(ctx, store, opCtx, req, registry)
+// opCtx.Operation must be trace.OpMaterialize
 // req: AppendIntentID, TargetTraceOwnerID, TargetRecordIDs,
-//      TargetThroughOwnerOrdinal (shepherd.MaxOwnerOrdinal), CaptureTraceOwnerID
+//      TargetThroughOwnerOrdinal (materialize.MaxOwnerOrdinal), CaptureTraceOwnerID
 // receipt: Outcome (success | clean_failure | split_state), SubstrateRef,
 //          TargetRecordIDs, ProducedRecordIDs, WorldSideAnchors
 
-echo := shepherd.NewEchoSubstrate("my.echo.v1", "example.write.v1")
-kv, err := shepherd.NewKVSubstrate("world.sqlite")   // kv.sqlite.local.v1
-ws := shepherd.NewWorkspaceSubstrate(sandbox)       // workspace.sandbox.v1
+echo := substrate.NewEchoSubstrate("my.echo.v1", "example.write.v1")
+kv, err := substrate.NewKVSubstrate("world.sqlite")   // kv.sqlite.local.v1
+ws := substrate.NewWorkspaceSubstrate(sandbox)       // workspace.sandbox.v1
 
 result, err := substrate.Materialize(ctx, records)   // substrates never append;
                                                      // dispatch owns the append
@@ -681,13 +648,13 @@ result, err := substrate.Materialize(ctx, records)   // substrates never append;
 ### Constants
 
 ```go
-shepherd.Capture                    // "capture"
-shepherd.Declaration                // "declaration"
-shepherd.ModeBoth                   // "both"
-shepherd.ModeCapturesOnly           // "captures_only"
-shepherd.ModeDeclarationsOnly       // "declarations_only"
-shepherd.TrustedAppendContext       // Default trusted append context
-shepherd.TrustedReadContext         // Default trusted read context
+trace.Capture                    // "capture"
+trace.Declaration                // "declaration"
+trace.ModeBoth                   // "both"
+trace.ModeCapturesOnly           // "captures_only"
+trace.ModeDeclarationsOnly       // "declarations_only"
+trace.TrustedAppendContext       // Default trusted append context
+trace.TrustedReadContext         // Default trusted read context
 shepherd.SchemaScopeForked          // "shepherd.scope.forked.v1"
 shepherd.SchemaScopeMerged          // "shepherd.scope.merged.v1"
 shepherd.SchemaScopeDiscarded       // "shepherd.scope.discarded.v1"
@@ -702,8 +669,8 @@ shepherd.CheckpointValid            // "valid"
 shepherd.CheckpointUsed             // "used"
 shepherd.CheckpointInvalid          // "invalid"
 
-shepherd.ErrNoSandbox               // scope has no sandbox
-shepherd.ErrUnsupported             // backend does not implement the capability
+sandbox.ErrNoSandbox               // scope has no sandbox
+sandbox.ErrUnsupported             // backend does not implement the capability
 ```
 
 ### Trace schemas

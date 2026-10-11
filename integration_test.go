@@ -2,6 +2,8 @@ package shepherd
 
 import (
 	"context"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +20,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 
 	// 1. Infrastructure
 	store := newMemStore(t)
-	bus := NewEffectBus(64)
+	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 	store.WithBus(bus)
 	mgr := NewScopeManager(store)
@@ -30,7 +32,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	mustGit(t, repo, "commit", "-m", "initial code")
 
 	// 3. Create a scope for the sub-agent
-	scope, err := mgr.Create("sub:worker", NewLocalGitSandbox(repo))
+	scope, err := mgr.Create("sub:worker", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -78,7 +80,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	}
 
 	// 9. Verify trace records both checkpoint.create and checkpoint.restore
-	slice, err := store.ReadOwnerPrefix(context.Background(), TrustedReadContext, "sub:worker", 99, ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), trace.TrustedReadContext, "sub:worker", 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -88,11 +90,11 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 		env := slice.FactsByID[id].GetEnvelope()
 		switch env.SchemaRef {
 		case SchemaCheckpointCreated:
-			if env.Mode == Declaration {
+			if env.Mode == trace.Declaration {
 				foundCreate = true
 			}
 		case SchemaCheckpointRestored:
-			if env.Mode == Capture {
+			if env.Mode == trace.Capture {
 				foundRestore = true
 			}
 		}
@@ -116,8 +118,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 	supervisor.AddRule(DestructiveToolGuard())
 
 	// Simulate the agent loop's pre-tool check for a destructive bash command
-	event := EffectEvent{
-		Mode:         Declaration,
+	event := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "bash",
 		SchemaRef:    "yaah.tool.bash.v1",
@@ -137,8 +139,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 
 	// Verify that even a benign bash command is denied under default-deny —
 	// shell commands cannot be safely allowlisted by text matching.
-	safeEvent := EffectEvent{
-		Mode:         Declaration,
+	safeEvent := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "bash",
 		SchemaRef:    "yaah.tool.bash.v1",
@@ -150,8 +152,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 	}
 
 	// Verify that a non-bash, non-write, non-delete tool is approved.
-	readEvent := EffectEvent{
-		Mode:         Declaration,
+	readEvent := trace.EffectEvent{
+		Mode:         trace.Declaration,
 		TraceOwnerID: "sub:worker",
 		KindLabel:    "read_file",
 		SchemaRef:    "yaah.tool.read.v1",
@@ -175,7 +177,7 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	mustGit(t, repo, "commit", "-m", "add app.go")
 
 	// Parent scope
-	parent, err := mgr.Create("sub:parent", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("sub:parent", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	mustGit(t, repo, "add", "-A")
 	mustGit(t, repo, "commit", "-m", "v1")
 
-	scope, err := mgr.Create("sub:multi", NewLocalGitSandbox(repo))
+	scope, err := mgr.Create("sub:multi", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -299,7 +301,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	mustGit(t, repo, "add", "-A")
 	mustGit(t, repo, "commit", "-m", "base")
 
-	parent, err := mgr.Create("sub:orchestrator", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("sub:orchestrator", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -314,7 +316,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	type variant struct {
 		child    *Scope
 		worktree string
-		state    WorkspaceState
+		state    trace.WorkspaceState
 		file     string
 		content  string
 	}
@@ -326,14 +328,14 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 
 	for i, v := range variants {
 		childOwner := "sub:variant-" + string(rune('a'+i))
-		child, err := mgr.ForkIsolated(parent.ID(), childOwner, nil, NewWorktreeSandbox(repo, v.worktree))
+		child, err := mgr.ForkIsolated(parent.ID(), childOwner, nil, sandbox.NewWorktreeSandbox(repo, v.worktree))
 		if err != nil {
 			t.Fatalf("ForkIsolated %d: %v", i, err)
 		}
 		v.child = child
 
 		sb := child.Sandbox()
-		if err := sb.Create(ctx, SandboxSpec{}); err != nil {
+		if err := sb.Create(ctx, sandbox.SandboxSpec{}); err != nil {
 			t.Fatalf("variant %d create: %v", i, err)
 		}
 		if err := child.ApplyWorkspace(ctx, forkState); err != nil {

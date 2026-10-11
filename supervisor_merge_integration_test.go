@@ -10,18 +10,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
-func fileExists(t *testing.T, dir, name string) bool {
-	t.Helper()
-	_, err := os.Stat(filepath.Join(dir, name))
-	return err == nil
-}
 
 // withinDrafts mirrors the merge gate's drafts-prefix rule: prefix itself or
 // inside prefix/.
@@ -36,15 +32,15 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:rev-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:rev-parent", sandbox.NewLocalGitSandbox(repo))
 
 	sup := NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
 	sup.AddRule(SupervisionRule{
 		Name: "drafts_only_merge_gate",
-		Match: func(e EffectEvent) bool {
+		Match: func(e trace.EffectEvent) bool {
 			return e.SchemaRef == SchemaMergeProposed
 		},
-		Action: func(e EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *Intervention {
 			paths, _ := e.Payload["paths"].([]string)
 			for _, p := range paths {
 				if !withinDrafts(p) {
