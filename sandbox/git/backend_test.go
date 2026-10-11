@@ -1048,10 +1048,17 @@ func TestGitSandbox_AddressIsNormalizedAbsolute(t *testing.T) {
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
 	if err := os.Chdir(repo); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(t.TempDir()) })
+	// Restore the original working directory, not a fresh temp one: on
+	// Windows a process holding its CWD inside a directory blocks the
+	// test framework's RemoveAll cleanup.
+	t.Cleanup(func() { _ = os.Chdir(wd) })
 	rel := filepath.Join(".", "rel-wt")
 	if err := os.Symlink(wt, filepath.Join(repo, "rel-wt")); err != nil {
 		t.Fatalf("symlink: %v", err)
