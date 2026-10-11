@@ -313,7 +313,7 @@ http.Handle("/", svc.Handler()) // mount anywhere; embeds in the writer for live
 | Endpoint | Behavior |
 |---|---|
 | `GET /api/health` | liveness, bus presence, fact count |
-| `GET /api/records?path=&through=&mode=` | records under an owner path prefix (empty spans all owners), with payloads, causal edges, and the resolved frontier; ordinal cutoff and mode filter optional |
+| `GET /api/records?path=&through=&mode=` | records under an owner path subtree — the path and its `:`-delimited descendants (empty spans all owners) — with payloads and causal edges; a record retained on several paths appears once per path with that path's own owner and ordinal. `through` is an inclusive per-owner ordinal cutoff; mode filter optional. Arrays are never null |
 | `GET /api/events` | server-sent events, one `effect` per appended record — requires the bus (embedded mode); without one it answers 503 and the client polls `/api/records` |
 
 Records carry id, digest, schema, mode, kind, owner, per-owner ordinal,
@@ -325,6 +325,9 @@ make the merge trivial.
 
 `cmd/traceui` is a standalone read-only viewer for an existing trace file
 (`traceui -db trace.sqlite -addr 127.0.0.1:8321`) — no bus, so clients poll.
+It opens the database read-only (`trace.OpenSQLiteTraceStoreReadOnly`): no
+journal-mode pragma, no schema creation, and the existing schema is verified,
+so a wrong path fails loudly instead of serving an empty or modified trace.
 
 ## Architecture
 

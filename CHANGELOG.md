@@ -8,12 +8,17 @@ contain breaking changes, which are called out below.
 
 ### Added
 - **`traceui` — a read-only HTTP projection of a trace store** (the
-  server half of the trace visualizer): `/api/records` serves the slice
-  under an owner path prefix with payloads, causal edges, and frontier;
-  `/api/events` streams one server-sent event per appended record when an
-  effect bus is attached (embedded mode). `cmd/traceui` is a standalone
-  read-only viewer for an existing trace file. The browser client lives in
-  a separate repository and consumes this contract.
+  server half of the trace visualizer): `/api/records` serves the records
+  under an owner path subtree (the path and its `:`-delimited descendants)
+  with payloads and causal edges, one entry per owner path that retains a
+  record; `/api/events` streams one server-sent event per appended record
+  when an effect bus is attached (embedded mode), carrying the persisted
+  record metadata. `cmd/traceui` is a standalone read-only viewer for an
+  existing trace file, opened through the new
+  `trace.OpenSQLiteTraceStoreReadOnly` (no journal-mode pragma, no schema
+  creation; the existing schema is verified, and a wrong path fails loudly).
+  The browser client lives in a separate repository and consumes this
+  contract.
 
 ## [v0.11.0] - 2026-10-10
 

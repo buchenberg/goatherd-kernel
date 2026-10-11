@@ -9,11 +9,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/shepherd-kernel-go/traceui"
@@ -29,13 +31,12 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	// Refuse to create a database: a viewer pointed at a wrong path should
-	// fail loudly, not show an empty trace of a session that never existed.
-	if _, err := os.Stat(*db); err != nil {
-		log.Fatalf("traceui: %v", err)
-	}
 
-	store, err := trace.NewSQLiteTraceStore(*db)
+	// Read-only opener: no journal-mode pragma, no schema creation, and a
+	// schema check on the existing file — a viewer pointed at a wrong path
+	// fails loudly, never modifies a valid trace, and never invents an
+	// empty one.
+	store, err := trace.OpenSQLiteTraceStoreReadOnly(*db)
 	if err != nil {
 		log.Fatalf("traceui: open %s: %v", *db, err)
 	}
@@ -46,6 +47,18 @@ func main() {
 		log.Fatalf("traceui: %v", err)
 	}
 
+	srv := &http.Server{
+		Addr:    *addr,
+		Handler: svc.Handler(),
+		// The header timeout bounds slow clients without bounding the
+		// responses themselves: /api/events streams for as long as the
+		// client stays connected, so whole-request read/write timeouts
+		// would cut healthy streams.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	log.Printf("traceui: serving %s on http://%s (no bus: poll /api/records)", *db, *addr)
-	log.Fatal(http.ListenAndServe(*addr, svc.Handler()))
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("traceui: serve: %v", err)
+	}
 }

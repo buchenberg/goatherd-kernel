@@ -24,6 +24,12 @@ type eventDTO struct {
 }
 
 func eventDTOFrom(e trace.EffectEvent) eventDTO {
+	causalParents := e.CausalParents
+	// Arrays are never null: a root effect has no causal parents and
+	// marshals [], so SSE consumers never guard a null.
+	if causalParents == nil {
+		causalParents = []string{}
+	}
 	return eventDTO{
 		RecordID:      e.RecordID,
 		IntentID:      e.IntentID,
@@ -32,7 +38,7 @@ func eventDTOFrom(e trace.EffectEvent) eventDTO {
 		SchemaRef:     e.SchemaRef,
 		KindLabel:     e.KindLabel,
 		Payload:       e.Payload,
-		CausalParents: e.CausalParents,
+		CausalParents: causalParents,
 		Timestamp:     e.Timestamp,
 	}
 }
@@ -54,7 +60,10 @@ func (s *Service) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subID := fmt.Sprintf("traceui-%d", s.subSeq.Add(1))
+	// The id is process-unique, not just service-unique: two services can
+	// share one bus, and a colliding id would close the other stream's
+	// subscription.
+	subID := fmt.Sprintf("traceui-%d", subSeq.Add(1))
 	ch := s.bus.Subscribe(subID)
 	defer s.bus.Unsubscribe(subID)
 

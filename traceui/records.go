@@ -3,6 +3,7 @@ package traceui
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/buchenberg/shepherd-kernel-go/trace"
 )
@@ -14,7 +15,6 @@ type recordsResponse struct {
 	Owners      []ownerSummary `json:"owners"`
 	Records     []recordDTO    `json:"records"`
 	CausalEdges [][2]string    `json:"causal_edges"`
-	Frontier    *frontierDTO   `json:"frontier"`
 }
 
 type ownerSummary struct {
@@ -22,9 +22,9 @@ type ownerSummary struct {
 	Records int    `json:"records"`
 }
 
-// recordDTO is one visible record. Payload is present when the record is
-// visible in full (the trusted read this service performs); hidden records
-// carry their hidden reason instead.
+// recordDTO is one visible record on one owner path. Payload is present when
+// the record is visible in full (the trusted read this service performs);
+// hidden records carry their hidden reason instead.
 type recordDTO struct {
 	ID           string         `json:"id"`
 	Digest       string         `json:"digest"`
@@ -40,18 +40,17 @@ type recordDTO struct {
 	HiddenReason string         `json:"hidden_reason,omitempty"`
 }
 
-type frontierDTO struct {
-	FrontierID  string `json:"frontier_id"`
-	Owner       string `json:"owner"`
-	ThroughFact string `json:"through_fact_id"`
-	ThroughOrd  int    `json:"through_owner_ordinal"`
-	Publisher   string `json:"publisher_owner_id"`
-	CreatedBy   string `json:"created_by_fact_id"`
-}
-
-// handleRecords projects a slice of the store as JSON. path is an owner path
-// prefix (empty spans all owners), through is an ordinal cutoff (0 = none),
-// mode selects the record-mode filter.
+// handleRecords projects a slice of the store as JSON. path selects an owner
+// path subtree (empty spans all owners), through is an inclusive per-owner
+// ordinal cutoff (absent means no cutoff), mode selects the record-mode
+// filter.
+//
+// Every selected owner path is read on its own rather than flattened through
+// one slice: the store retains a content-addressed record on multiple owner
+// paths, and a single slice keys records by id, so a merged read would
+// label the record with whichever path was loaded last. Per-path reads keep
+// each occurrence's own owner, ordinal, and kind label — a record appears
+// once per owner path that retains it.
 func (s *Service) handleRecords(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	through := maxThrough
@@ -69,62 +68,83 @@ func (s *Service) handleRecords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slice, err := s.store.ReadPathPrefix(r.Context(), trace.TrustedReadContext, path, through, modeFilter)
+	// One unscoped read enumerates the owner paths; each path in the
+	// selected subtree is then read individually.
+	all, err := s.store.ReadOwnerPrefix(r.Context(), trace.TrustedReadContext, "", through, modeFilter)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "read: "+err.Error())
 		return
 	}
 
 	resp := recordsResponse{
-		Visibility:  string(slice.VisibilityProfile),
+		Visibility:  string(all.VisibilityProfile),
 		Mode:        mode,
 		Owners:      []ownerSummary{},
 		Records:     []recordDTO{},
-		CausalEdges: slice.CausalEdges,
+		CausalEdges: [][2]string{},
 	}
-	// Arrays are never null: the client contract guarantees [] for empty.
-	if resp.CausalEdges == nil {
-		resp.CausalEdges = [][2]string{}
-	}
-	if slice.Frontier != nil {
-		resp.Frontier = &frontierDTO{
-			FrontierID:  slice.Frontier.FrontierID,
-			Owner:       slice.Frontier.TargetTraceOwnerID,
-			ThroughFact: slice.Frontier.ThroughFactID,
-			ThroughOrd:  slice.Frontier.ThroughOwnerOrdinal,
-			Publisher:   slice.Frontier.PublisherOwnerID,
-			CreatedBy:   slice.Frontier.CreatedByFactID,
-		}
-	}
-	for _, owner := range slice.OwnerPathOrder {
-		resp.Owners = append(resp.Owners, ownerSummary{ID: owner, Records: len(slice.OwnerPaths[owner])})
-	}
-	for _, id := range slice.FactIDs() {
-		vr, ok := slice.FactsByID[id]
-		if !ok {
+	seenEdges := make(map[[2]string]bool)
+	for _, owner := range all.OwnerPathOrder {
+		if !pathMatches(path, owner) {
 			continue
 		}
-		dto := recordDTO{ID: id}
-		env := vr.GetEnvelope()
-		dto.Digest = env.Digest
-		dto.SchemaRef = env.SchemaRef
-		dto.Mode = string(env.Mode)
-		dto.WitnessRef = env.WitnessRef
-		dto.CausedBy = env.CausedByIDs
-		if view := vr.GetView(); view != nil {
-			dto.Owner = view.TraceOwnerID
-			dto.Ordinal = view.OwnerOrdinal
-			dto.ContextRef = view.ContextRef
-			dto.KindLabel = view.KindLabel
+		slice, err := s.store.ReadOwnerPrefix(r.Context(), trace.TrustedReadContext, owner, through, modeFilter)
+		if err != nil {
+			httpError(w, http.StatusInternalServerError, "read "+owner+": "+err.Error())
+			return
 		}
-		if rec, full := vr.(trace.Record); full {
-			dto.Payload = rec.Body.Payload
-		} else if shape, hidden := vr.(trace.RecordShape); hidden {
-			dto.HiddenReason = shape.HiddenReason
+		resp.Owners = append(resp.Owners, ownerSummary{ID: owner, Records: len(slice.OwnerPaths[owner])})
+		for _, id := range slice.FactIDs() {
+			vr, ok := slice.FactsByID[id]
+			if !ok {
+				continue
+			}
+			resp.Records = append(resp.Records, recordDTOFrom(id, vr))
 		}
-		resp.Records = append(resp.Records, dto)
+		for _, edge := range slice.CausalEdges {
+			if !seenEdges[edge] {
+				seenEdges[edge] = true
+				resp.CausalEdges = append(resp.CausalEdges, edge)
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// recordDTOFrom projects one visible record. CausedBy is normalized so the
+// array contract holds: a record without causal parents carries [], never
+// null.
+func recordDTOFrom(id string, vr trace.VisibleRecord) recordDTO {
+	dto := recordDTO{ID: id}
+	env := vr.GetEnvelope()
+	dto.Digest = env.Digest
+	dto.SchemaRef = env.SchemaRef
+	dto.Mode = string(env.Mode)
+	dto.WitnessRef = env.WitnessRef
+	dto.CausedBy = env.CausedByIDs
+	if dto.CausedBy == nil {
+		dto.CausedBy = []string{}
+	}
+	if view := vr.GetView(); view != nil {
+		dto.Owner = view.TraceOwnerID
+		dto.Ordinal = view.OwnerOrdinal
+		dto.ContextRef = view.ContextRef
+		dto.KindLabel = view.KindLabel
+	}
+	if rec, full := vr.(trace.Record); full {
+		dto.Payload = rec.Body.Payload
+	} else if shape, hidden := vr.(trace.RecordShape); hidden {
+		dto.HiddenReason = shape.HiddenReason
+	}
+	return dto
+}
+
+// pathMatches reports whether owner names a path inside the subtree rooted
+// at prefix: the path itself, or a ":"-delimited descendant of it. The
+// delimiter keeps a prefix from bleeding into unrelated paths — agent:main
+// matches agent:main:child but not agent:mainly.
+func pathMatches(prefix, owner string) bool {
+	return prefix == "" || owner == prefix || strings.HasPrefix(owner, prefix+":")
 }
 
 func parseMode(raw string) (string, trace.ModeFilter, error) {

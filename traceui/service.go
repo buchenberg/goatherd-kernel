@@ -3,6 +3,7 @@ package traceui
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sync/atomic"
 
@@ -11,8 +12,9 @@ import (
 
 // maxThrough is the default ordinal cutoff: effectively none, mirroring the
 // materialize orchestrator's MaxOwnerOrdinal without importing it (which
-// would pull the substrate tree into a viewer).
-const maxThrough = 1<<63 - 1
+// would pull the substrate tree into a viewer). math.MaxInt keeps it
+// platform-sized: a 1<<63-1 literal overflows int on 32-bit targets.
+const maxThrough = math.MaxInt
 
 // Config builds a Service.
 type Config struct {
@@ -38,8 +40,14 @@ type Service struct {
 	store   *trace.SQLiteTraceStore
 	bus     *trace.EffectBus
 	origins []string
-	subSeq  atomic.Uint64
 }
+
+// subSeq numbers subscriptions across every Service instance in the
+// process. Subscription ids must be unique per bus, not per service: two
+// services sharing one bus would otherwise both mint "traceui-1" —
+// EffectBus.Subscribe closes and replaces the first subscription by id, and
+// the first handler's deferred unsubscribe could then delete the second.
+var subSeq atomic.Uint64
 
 // New validates the configuration and returns the service.
 func New(cfg Config) (*Service, error) {
@@ -81,16 +89,30 @@ func (s *Service) get(next http.HandlerFunc) http.HandlerFunc {
 func (s *Service) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		origin := r.Header.Get("Origin")
 		if len(s.origins) == 0 {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		} else {
-			origin := r.Header.Get("Origin")
+			// The response depends on the request Origin: caches and
+			// proxies must not reuse one origin's answer for another.
+			w.Header().Add("Vary", "Origin")
 			for _, allowed := range s.origins {
-				if origin == allowed {
+				if origin != "" && origin == allowed {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					break
 				}
 			}
+		}
+		// A browser preflights a non-simple cross-origin request; answer it
+		// here rather than letting the GET-only guard 405 it without the
+		// access-control headers that make the real request possible.
+		if r.Method == http.MethodOptions && origin != "" {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			if req := r.Header.Get("Access-Control-Request-Headers"); req != "" {
+				w.Header().Set("Access-Control-Allow-Headers", req)
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
