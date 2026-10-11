@@ -298,6 +298,26 @@ store separate from the trace, and the echo substrate is the test fixture.
 
 ## Architecture
 
+### Package layout
+
+The module is organized by component. Everything a consumer imports lives in
+the root `shepherd` package; the components behind it live under `internal/`,
+which makes the layering compiler-enforced (a substrate cannot reach the
+store, the store cannot reach a sandbox):
+
+| Package | Contents |
+|---|---|
+| `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, handles, settlement, supervisor, merge gate, recovery — plus the alias files that re-export the components |
+| `internal/trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
+| `internal/sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
+| `internal/substrate` | the `Substrate` contract, the fail-closed registry, the echo/KV/workspace substrates |
+| `internal/materialize` | the materialize orchestrator (owns the append; substrates never do) |
+| `internal/gittest`, `internal/testvectors` | test support shared across packages |
+| `sandbox/containerd` | the containerd backend, a nested module (unchanged) |
+
+The re-exports are type aliases and value aliases, so existing imports keep
+compiling unchanged.
+
 ```
 ┌──────────────────────────────────────────────────┐
 │  Orchestrator                                    │
