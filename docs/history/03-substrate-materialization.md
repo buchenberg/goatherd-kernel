@@ -1,5 +1,9 @@
 # Plan 03 — Substrates & Materialization Dispatch
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Phase**: 2 (parallel with plan 02) · **Priority**: P1 · **Estimate**: ~1–2 weeks (~600–900 LOC + tests)
 **Status**: implemented (2026-10-08) — code and tests landed; see the status notes at §7
 **Goal**: Port shepherd2 `vnext` substrate/materialization semantics — typed

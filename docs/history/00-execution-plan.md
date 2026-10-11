@@ -1,5 +1,9 @@
 # 00 — Phased Execution Plan (Master)
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Date**: 2026-09-16 · **Owner**: buchenberg · **Status**: proposed
 **Scope**: shepherd-kernel-go (`github.com/buchenberg/shepherd-kernel-go`, main @ `a07ead4` = v0.3.2; `feat/containerd` @ `48b16fb` = untagged v0.4.0-content)
 **Reference**: Python `shepherd` monorepo (`shepherd-workspace` 0.3.1, `shepherd2` 0.1.0a0, main @ `d34d5ca3`)
@@ -8,8 +12,8 @@ This is the **execution** document: task-level breakdown, sequencing,
 dependencies, milestones, risks, and per-phase entry/exit gates. It ties
 together:
 
-- `PARITY-PLAN.md` — the comparison, scope decisions, and what stays out
-- `plans/01…05` — per-workstream technical detail (APIs, tests, acceptance)
+- `parity-plan.md` — the comparison, scope decisions, and what stays out
+- `01…05` — per-workstream technical detail (APIs, tests, acceptance)
 
 Where this document and a workstream plan disagree on sequencing, this
 document wins; where they disagree on API shape, the workstream plan wins.
@@ -391,7 +395,7 @@ Linux spot-check (WSL/CI).
 ## 6. Phase 1 — ABI trust (W2–3, ~8–10 dev-days) → v0.5.0
 
 **Goal**: turn "byte-identical digests" into a tested property across the
-whole store path. Detailed spec: `plans/01-abi-conformance.md`.
+whole store path. Detailed spec: `01-abi-conformance.md`.
 **Entry criteria**: M0 tagged; Python repo available locally at `../shepherd`
 (pinned tag recorded for vector generation).
 **Deliverable**: v0.5.0 — **includes a digest-behavior change** (payloads with
@@ -433,7 +437,7 @@ edge-case payloads are **not** digest-compatible — note in yaah release notes.
 ## 7. Phase 2a — Schema rings & runtime handles (W4–6, ~10–12 dev-days) → v0.6.0
 
 **Goal**: make Go traces interpretable — executions, relations, history, with
-a sync task facade. Detailed spec: `plans/02-schemas-runtime.md`.
+a sync task facade. Detailed spec: `02-schemas-runtime.md`.
 **Entry criteria**: v0.5.0 (canonical parity is a hard prerequisite — schema
 IDs are digests).
 **Deliverable**: v0.6.0 with new root-package files and no new dependencies.
@@ -457,7 +461,7 @@ IDs are digests).
 ## 8. Phase 2b — Substrates & materialization (W5–7, ~6–8 dev-days) → v0.7.0
 
 **Goal**: typed declaration→capture substrate dispatch with an idempotency
-ledger, bridged to `Sandbox`. Detailed spec: `plans/03-substrate-materialization.md`.
+ledger, bridged to `Sandbox`. Detailed spec: `03-substrate-materialization.md`.
 **Entry criteria**: v0.5.0. Runs in parallel with 2a; **tag order**: v0.7.0
 cut only after v0.6.0 merges (avoid interleaved minors).
 **Deliverable**: v0.7.0.
@@ -493,7 +497,7 @@ github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.3
 
 **Goal**: check-at-commit review + consume-once output settlement on the
 existing `Scope`/`Sandbox` primitives, with the three reference recipes as
-tests. Detailed spec: `plans/04-supervision-settlement.md`.
+tests. Detailed spec: `04-supervision-settlement.md`.
 **Entry criteria**: v0.6.0 preferred (executions give runs identities) but
 not hard-required — settlement addresses scopes/outputs, not executions.
 **Deliverable**: v0.8.0.
@@ -524,7 +528,7 @@ v0.8.0 tagged.
 ## 10. Phase 4 — Durability & idioms (W9–11, ~6–8 dev-days) → v0.9.0
 
 **Goal**: close the restart-durability gap and land the last breaking idiom
-change. Detailed spec: `plans/05-persistence-hygiene-release.md` §4, §6–8.
+change. Detailed spec: `05-persistence-hygiene-release.md` §4, §6–8.
 **Entry criteria**: v0.8.0 (recovery must understand settlement records).
 **Deliverable**: v0.9.0 — **breaking**: `context.Context` becomes the first
 parameter across store APIs.
@@ -685,7 +689,7 @@ fence **stands**, and the decision is to stay inside it.
 No Go containment work is authorised. If real confinement is later required, the
 answer is **Option C — compose with a verified jail rather than port one** —
 unless B is deliberately chosen with its own plan and parity story. The
-re-evaluation gate is `plans/05 §4` durability (T4.1–T4.2), which is the gap
+re-evaluation gate is `05 §4` durability (T4.1–T4.2), which is the gap
 `yaah` actually feels today.
 
 ### 15.1 The fence, and what it protects
@@ -696,7 +700,7 @@ fence; any task touching it requires a written decision note reversing a
 GAP-REPORT rejection."*
 
 The fence protects decisions that were argued, not merely deferred.
-`GAP-REPORT.md:42-49` rejects two approaches with reasons:
+`gap-report.md:42-49` rejects two approaches with reasons:
 
 - **file-delta materialization** — git is a better materializer, and deltas
   still miss bash side effects;
@@ -714,7 +718,7 @@ and different fences.
 **Path A — materialization and reversibility (in scope, planned).**
 `Sandbox` as a seam for capturing, applying and diffing `WorkspaceState`, plus
 declaration→capture materialization of recorded intents. Planned in full:
-`plans/03` (`WorkspaceSubstrate`, gated on Phase 1) and `plans/05 §4`
+`03` (`WorkspaceSubstrate`, gated on Phase 1) and `05 §4`
 (durability). This is what the kernel's `Sandbox` interface *is*: git in-place and
 worktree backends written, containerd backend written, capability gating via
 `Capabilities()` + `ErrUnsupported`.
@@ -737,7 +741,7 @@ validator's symlink resolution, and it is bounded by the container"*
 
 | | Option | Cost | Gets you |
 |---|---|---|---|
-| **A** | **Stay inside the fence.** Finish materialization: `plans/03`, then `plans/05 §4` durability. | Already estimated (~1–2 wk + ~2 wk) | Reversible, auditable, trace-mediated workspace operations; rollback that survives restart |
+| **A** | **Stay inside the fence.** Finish materialization: `03`, then `05 §4` durability. | Already estimated (~1–2 wk + ~2 wk) | Reversible, auditable, trace-mediated workspace operations; rollback that survives restart |
 | **B** | **Reverse the fence for a Go jail.** Port the containment ladder / syscall jails. | Unestimated; realistically a new workstream | Real confinement in the Go stack; removes the `yaah` "plumbed but not active, bounded by the container" caveat |
 | **C** | **Compose rather than port.** Keep the kernel jail-free; get enforcement from the substrate (`daytona`-class sandbox, or `shepherd`'s Python path over ACP). | Integration work, no kernel divergence | Enforcement without forking the ABI or diverging from Python |
 
@@ -748,7 +752,7 @@ validator's symlink resolution, and it is bounded by the container"*
   large subsystem with no Python counterpart, so it cannot be vector-pinned —
   and vectors are the arbiter of parity (§2 principle 3). A jail is precisely
   the kind of thing that is *hard* to pin cross-language.
-- `plans/03` already delivers the property `yaah` most needs: isolation of
+- `03` already delivers the property `yaah` most needs: isolation of
   *effects*, which is what `supervised_task`'s rollback depends on.
 - Enforcement is largely orthogonal to the kernel's purpose. The kernel records
   and reverses; a container runtime confines. Conflating them is how R6's High
@@ -783,11 +787,11 @@ Consequences, in force as of 2026-10-05:
 1. **No containment task may be scheduled** against this repo. The fence stands:
    no syscall jails, no egress broker, no containment ladder, no `may=`-style
    grant vocabulary in Go.
-2. **`plans/05 §4` durability (T4.1–T4.2) is the re-evaluation gate.** Finish
+2. **`05 §4` durability (T4.1–T4.2) is the re-evaluation gate.** Finish
    trace-based recovery and checkpoint durability, then revisit enforcement with
    the durability question closed. This is also the highest-value work for `yaah`
    today: in-memory checkpoints mean rollback does not survive a restart.
-3. **`plans/03` proceeds unchanged.** `WorkspaceSubstrate` is in-fence work and
+3. **`03` proceeds unchanged.** `WorkspaceSubstrate` is in-fence work and
    remains the plan for the materialization path — still gated on Phase 1 by §4.
 4. **Documentation must not overclaim.** Because Path A leaves the
    "plumbed but not active, bounded by the container" caveat in place, README and
@@ -807,7 +811,7 @@ replace the missing cross-language pin (§2 principle 3), the
 
 ### 15.6 What this note does *not* decide
 
-It does not authorise containment work. It does not change `plans/03`,
-`plans/05`, or `PARITY-PLAN §4`, all of which proceed as written. What changes is
+It does not authorise containment work. It does not change `03`,
+`05`, or `PARITY-PLAN §4`, all of which proceed as written. What changes is
 that the fork is now closed rather than pending: **Path A is the plan of record**,
 and any future move to B re-opens this note rather than silently extending it.

@@ -1,5 +1,9 @@
 # Plan 01 — ABI Conformance Hardening
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Phase**: 1 · **Priority**: P0 · **Estimate**: ~1–2 weeks (~1000–1500 LOC incl. tests)
 **Goal**: Make the claim "byte-identical digests from the same inputs" a
 *tested property over the whole store path*, not just over hand-picked digest

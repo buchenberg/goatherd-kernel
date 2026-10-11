@@ -1,5 +1,9 @@
 # Plan 02 — Schema Rings + Runtime Handles
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Phase**: 2 · **Priority**: P1 · **Estimate**: ~2–3 weeks (~1200–1800 LOC + ~1000 test LOC)
 **Goal**: Port shepherd2 Ring 1 (schemas) and Ring 2 (runtime handles) so Go
 traces become *interpretable*: executions with lifecycle projections, spawn/

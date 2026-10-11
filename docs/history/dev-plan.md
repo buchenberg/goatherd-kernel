@@ -1,5 +1,9 @@
 # Development Plan: Checkpoint/Restore + Synchronous Interception
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 > **Superseded (v0.4.0).** This plan was executed for `v0.3.x` and its goals were
 > met, but the interface it specifies — `GitCheckpoint` with `StashSHA`/`HeadSHA`/
 > `RepoPath`, and `CreateCheckpoint(repoPath, snapshot)` taking a repo path — has

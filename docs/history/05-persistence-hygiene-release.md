@@ -1,5 +1,9 @@
 # Plan 05 — Persistence, Hygiene & Release
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Phase**: 0 (items 1–3, 5 run **first**) + ongoing (items 4, 6–8) · **Priority**: P0 (process) · **Estimate**: ~1–2 weeks total, interruptible
 **Goal**: Make the current state of the port real and consumable (v0.4.0
 exists only on an untagged branch), fix the known small bugs in one batch,

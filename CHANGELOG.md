@@ -16,6 +16,15 @@ contain breaking changes, which are called out below.
   and relations folds) had already landed with v0.6.0 — the map lagged the
   tree. `docs/law-coverage.md` now shows all 25 laws green with no
   accepted gaps, and the §13 checklist item is ticked.
+- **Documentation consolidated.** The README now presents the three
+  sandbox backends together in one Sandboxes section (its "What It Is"
+  previously named only the git backends); the containerd backend's
+  verification record and live-suite instructions moved to
+  `docs/containerd.md`. The completed planning documents — the master
+  execution plan, workstream plans 01–05, the parity comparison, and the
+  historical gap/dev plans — are archived under `docs/history/` with their
+  ticks frozen, and the living plan (the v1.0 gate, the backlog, the
+  release procedure) is `docs/DEVELOPMENT.md`.
 
 ## [v0.13.0] - 2026-10-11
 

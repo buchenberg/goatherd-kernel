@@ -1,5 +1,9 @@
 # Public components plan (target: v0.11.0)
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 Status: executed on reorg/public-components (S1-S7); tag v0.11.0 after merge. Prerequisite: the component-extraction PR (alias stage)
 merges to main first. No release tag is cut between that merge and this
 plan landing — pkg.go.dev renders the latest tag, so the alias stage must

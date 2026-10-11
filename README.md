@@ -8,7 +8,7 @@ A content-addressed, append-only, causally-linked execution trace store over SQL
 
 The kernel records agent actions as durable, inspectable, reversible traces. Every tool call, every file mutation, every agent decision becomes a record in a causal DAG with content-addressed identity.
 
-Reversibility is real, not notional: scopes carry a pluggable **Sandbox** that captures, restores, and diffs the workspace they operate on, so a speculative branch can be rolled back or discarded outright. Two backends ship today — an in-place git materializer that works on any platform, and a git-worktree backend that isolates each branch in its own checkout.
+Reversibility is real, not notional: scopes carry a pluggable **Sandbox** that captures, restores, and diffs the workspace they operate on, so a speculative branch can be rolled back or discarded outright. Three sandbox backends ship: an in-place git materializer that works on any platform, a git-worktree backend that isolates each branch in its own checkout, and a containerd backend that runs each branch in its own container (a nested module; see [docs/containerd.md](docs/containerd.md)).
 
 This is a standalone Go module implementing `shepherd.kernel.abi.v0` — the same frozen ABI as the Python reference (`shepherd2`) and produces byte-identical digests from the same golden test vectors.
 
@@ -361,7 +361,7 @@ trace  <-  sandbox  <-  substrate  <-  materialize
 | `sandbox/git` | the git backend (in-place, worktree); self-registers as "git" |
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
-| `internal/gittest`, `internal/testvectors` | test support shared across packages |
+| `internal/gittest`, `internal/testvectors`, `internal/rttest` | test support shared across packages |
 | `sandbox/containerd` | the containerd backend, a nested module |
 
 The v0.11 package move broke imports that used the root package for
@@ -371,15 +371,7 @@ the CHANGELOG's v0.11.0 section carries the full migration table. Runtime
 symbols (`shepherd.NewScope`, `shepherd.NewScopeManager`, ...) are
 unchanged. (The git constructors have since moved again — to `sandbox/git`
 — and the task/supervisor symbols to their own packages; the CHANGELOG's
-Unreleased section carries those migrations.)
-
-\* `git` ships in the core module as the `sandbox/git` subpackage; the containerd backend is a nested
-module (`sandbox/containerd`) that needs a Linux environment at runtime —
-native Linux, **WSL2**, or a Linux server — because containerd and overlayfs
-are Linux. The module itself cross-compiles (it builds on Windows and macOS;
-the daemon it talks to does not run there). Any implementation of the
-`Sandbox` interface is swappable in, and `OpenSandbox` resolves a configured
-backend name to a constructed sandbox.
+v0.13.0 section carries those migrations.)
 
 ## Core Concepts
 
@@ -417,7 +409,23 @@ A **scope** represents a branch of execution. Fork creates a child scope with it
 
 A scope also carries an optional **sandbox** — its execution substrate. A scope created without one is *pure-causal*: it participates in the trace DAG but workspace operations return `ErrNoSandbox`. `Fork` inherits the parent's sandbox without owning it; `ForkIsolated` attaches a new sandbox that the child owns, so `Discard`/`Merge`/`Halt` destroy it.
 
-### Sandboxes
+### Workspace State
+
+A **`WorkspaceState`** is a backend-neutral snapshot of a workspace — the replacement for the git-specific stash/HEAD pair:
+
+```go
+type WorkspaceState struct {
+    Backend  string         // "git", "containerd"
+    Revision string         // git HEAD SHA, or a snapshot key
+    Data     map[string]any // backend-specific, opaque to the kernel
+}
+```
+
+`Digest()` returns the kernel canonical digest of the state (`sha256:…`), used in trace records and for drift detection. Two states with identical content digest identically regardless of map iteration order, because canonicalization sorts keys at every level.
+
+Unlike a `Checkpoint`, a `WorkspaceState` has no lifecycle: it is reusable and stays valid, so one fork point can seed many speculative branches.
+
+## Sandboxes
 
 A **Sandbox** is the substrate a scope forks, snapshots, restores, diffs, and executes in. It is the seam that keeps the kernel independent of any particular isolation technology:
 
@@ -436,104 +444,45 @@ type Sandbox interface {
 }
 ```
 
-Backends need not implement everything. `Capabilities()` reports what is available, and unimplemented operations return `ErrUnsupported` rather than pretending to succeed. That is how the git backend — a materializer, not an isolation boundary — satisfies the interface without claiming `Exec` or `Isolated`.
+Backends need not implement everything. `Capabilities()` reports what is available, and unimplemented operations return `ErrUnsupported` rather than pretending to succeed. `Capture` and `Diff` are **non-mutating**: the caller's git index is left as it was found.
 
-`Capture` and `Diff` are **non-mutating**: the caller's git index is left as it was found.
+Three backend modes ship, packaged on purpose:
 
-Two backends ship in the core module:
+| Backend | Mode | Lifecycle | Isolated | Containment | Package |
+|---|---|---|---|---|---|
+| `git` | in-place (`git.NewLocalGitSandbox`) | No — validates only | No | `uncontained` | `sandbox/git`, in the core module |
+| `git` | worktree (`git.NewWorktreeSandbox`) | Yes — real worktrees | Yes | `buffered` | `sandbox/git`, in the core module |
+| `containerd` | container per scope | Yes — snapshots + leases | Yes | `contained` | `sandbox/containerd`, a nested module |
 
-| Backend | Mode | Lifecycle | Isolated | Containment |
-|---|---|---|---|---|
-| `git` | in-place (`NewLocalGitSandbox`) | No — validates only | No | `uncontained` |
-| `git` | worktree (`NewWorktreeSandbox`) | Yes — real worktrees | Yes | `buffered` |
+- **git** — the core module's `sandbox/git` subpackage. A materializer, not an isolation boundary; zero external dependencies; the carrier the kernel's own test suite rides on. Works on any platform.
+- **containerd** — a nested module so its dependency tree stays out of the core. It runs **anywhere a containerd daemon runs: native Linux, WSL2, or a Linux server** — Linux is a runtime requirement (containerd and overlayfs are Linux), not a build-tag fact; the module cross-compiles on Windows and macOS even though the daemon does not run there. It implements `sandbox.DeltaApplier` (settlement's `SettleApply` works on containerd scopes), runs unprivileged (any user sharing the containerd socket group, since `v0.2.1`), and its live verification record is in [docs/containerd.md](docs/containerd.md).
 
-A third backend lives in the nested module `sandbox/containerd/`: an
-overlay-snapshotter backend with namespace isolation. Its snapshot lifecycle,
-teardown ordering, layer pruning, file I/O, and diff are implemented and
-unit-tested against containerd's real snapshotter interface.
-
-**Daemon status: verified.** The live harness
-(`sandbox/containerd/live_test.go`, env-gated on `SHEPHERD_CONTAINERD_ADDR`) was
-first run against a real containerd v2.3.5 in October 2026. It found and fixed
-nine defects the fakes could not reach — exec never started its process, the
-rootfs snapshot key was the manifest digest rather than the layer chainID,
-teardown orphaned exec'd processes, and `Diff` mutated the caller's git index.
-It then exposed a tenth: the adapter held **no containerd lease**, so once
-`Capture` stopped the task its just-committed snapshot was unreferenced and the
-daemon's garbage collector could reclaim it before the successor was prepared
-(`mutation_threshold = 100`, `schedule_delay = 0s` on a default install). That
-made the suite fail 3 runs in 5, a different test each time.
-
-The sandbox now holds a labelled lease for its lifetime, and **12 consecutive
-live runs are green**. The harness needs a Linux environment with a running
-containerd daemon — native Linux, WSL2, or a server all qualify (the harness
-was designed with a WSL2 host in mind: the FIFODir knob exists precisely so a
-non-root WSL2 client can drive the daemon); a stock image and the overlayfs
-snapshotter suffice. The module needs that Linux environment at runtime and
-can never be this module's default.
-
-**Unprivileged operation.** Since `sandbox/containerd/v0.2.1` the backend
-works for unprivileged clients — any user sharing only the containerd
-socket group. The init spec is built from the image config blob read
-through the daemon's content store (env, working directory, numeric
-`uid[:gid]`), never from the client process's filesystem: the previous
-`oci.WithImageConfig` path resolved the image user by reading the unpacked
-rootfs, which the daemon's 0700-root snapshot directories make impossible
-for anyone but root. Verified live (PR #40, 2026-10-11): an unprivileged
-client passed `Create` and the contract exec where it previously failed
-with EACCES, and a full end-to-end session ran with in-sandbox tool exec
-(`pwd` = `/workspace` inside the container).
-
-**State durability.** A first run against a *cold* daemon (fresh namespace, no
-image) found an eleventh defect the warm-daemon runs had masked, and a twelfth
-that no run could have passed: `Destroy` deleted the committed layers backing
-captured states, so `Apply` after `Destroy` — plan 03's acceptance sequence —
-failed every time. States are now durable by construction: every `Capture`
-pins its committed layer under a namespace-scoped `shepherd-states` lease that
-outlives any sandbox, `Destroy` removes only the sandbox's private active
-layer, and an optional `StateReleaser` interface
-(`ReleaseState`) is the deliberate reclaim path — disk comes back when the
-caller says so, not when a sandbox happens to die. Promoting the release call
-into core's `Sandbox` interface is a separate kernel-API decision. The
-cold-namespace live suite that found both defects — including the
-destroy-keeps-states acceptance sequence — is **9/9 green** on this code
-(2026-10-10, released as `sandbox/containerd/v0.1.4`).
-
-**Delta merges.** Since `sandbox/containerd/v0.1.5` the backend implements
-`sandbox.DeltaApplier`, so settlement's apply verb (`SettleApply`) works on
-containerd scopes: a sealed output merges onto a parent whose workspace moved
-past the fork, without resetting it. `Apply` records the applied state's git
-HEAD as the sandbox's delta base and every `Capture` carries a git binary
-patch from that base to the captured tree; `ApplyDelta` merges at the tree
-level (`git merge-tree --write-tree`) in the object database, so a conflicting
-delta refuses with the working tree untouched — no markers, no partial
-application — and a clean one lands as unstaged changes that leave the
-caller's staged work alone. The package also self-registers with
-`sandbox.OpenSandbox` under `"containerd"` when imported, so
-config-driven backend selection needs no host wiring beyond the import.
-The merge machinery is pinned live by
-`TestLive_ApplyDeltaMergesOntoMovedParent` and
-`TestLive_ApplyDeltaConflictRefusesUntouched`.
-
-### Workspace State
-
-A **`WorkspaceState`** is a backend-neutral snapshot of a workspace — the replacement for the git-specific stash/HEAD pair:
+Any type implementing the `Sandbox` interface is swappable in — the
+kernel never inspects a backend beyond the opaque
+`WorkspaceState.Backend` string. For config-driven selection, backends
+register factories and the host resolves a configured name:
 
 ```go
-type WorkspaceState struct {
-    Backend  string         // "git", "containerd"
-    Revision string         // git HEAD SHA, or a snapshot key
-    Data     map[string]any // backend-specific, opaque to the kernel
-}
+// Config-driven construction: the git backend (sandbox/git) self-registers, and
+// the containerd backend self-registers when its package is imported.
+sb, err := sandbox.OpenSandbox("git", git.GitSandboxConfig{RepoPath: repoPath})
+
+_, err = sandbox.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
+backends := sandbox.SandboxBackends()          // sorted names, for config diagnostics
+
+// Direct constructors remain available:
+inPlace := git.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
+worktree := git.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
+
+err = sb.Create(ctx, sandbox.SandboxSpec{})    // OpenSandbox does NOT provision; Create is the lifecycle step
+defer sb.Destroy(ctx)
+
+ws, err := sb.Capture(ctx)
+err = sb.Apply(ctx, ws)
+diff, files, err := sb.Diff(ctx, ws, maxLines)
+
+caps := sb.Capabilities()   // capability negotiation: Lifecycle/Exec/FileIO/Diff/Isolated/Containment
 ```
-
-`Digest()` returns the kernel canonical digest of the state (`sha256:…`), used in trace records and for drift detection. Two states with identical content digest identically regardless of map iteration order, because canonicalization sorts keys at every level.
-
-Unlike a `Checkpoint`, a `WorkspaceState` has no lifecycle: it is reusable and stays valid, so one fork point can seed many speculative branches.
-
-### Supervisor
-
-A rule-based engine that watches the effect bus and emits **interventions** when rules match. Built-in rules guard against destructive operations, high error rates, and stuck detection.
 
 ## API
 
@@ -615,50 +564,9 @@ cp, err := scope.CreateCheckpoint(ctx, snapshot)
 snapshot, err := scope.RestoreCheckpoint(ctx, cp)
 ```
 
-### Sandbox backends
-
-Two implementations exist, packaged differently on purpose:
-
-- **git** — in the core module, the `sandbox/git` subpackage. It is a materializer, not an
-  isolation boundary (`Isolated: false` in-place, `true` for a detached
-  worktree), has zero external dependencies, and is the carrier the
-  kernel's own test suite rides on.
-- **containerd** — a nested module (`sandbox/containerd`) so its
-  dependency tree stays out of the core. It runs **anywhere a containerd
-  daemon runs: native Linux, WSL2, or a Linux server** — Linux is a runtime
-  requirement (containerd and overlayfs are Linux), not a build-tag fact;
-  the module cross-compiles on Windows and macOS even though the daemon
-  does not run there.
-
-Any type implementing the `Sandbox` interface is swappable in — the
-kernel never inspects a backend beyond the opaque
-`WorkspaceState.Backend` string. For config-driven selection, backends
-register factories and the host resolves a configured name:
-
-```go
-// Config-driven construction: the git backend (sandbox/git) self-registers, and
-// the containerd backend self-registers when its package is imported
-// (sandbox/containerd v0.1.5+ pins a registry-carrying core).
-sb, err := sandbox.OpenSandbox("git", git.GitSandboxConfig{RepoPath: repoPath})
-
-_, err = sandbox.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
-backends := sandbox.SandboxBackends()          // sorted names, for config diagnostics
-
-// Direct constructors remain available:
-inPlace := git.NewLocalGitSandbox(repoPath) // materializes on your repository. Destroy is a no-op.
-worktree := git.NewWorktreeSandbox(repoPath, wt) // a detached git worktree this scope owns
-
-err = sb.Create(ctx, sandbox.SandboxSpec{})    // OpenSandbox does NOT provision; Create is the lifecycle step
-defer sb.Destroy(ctx)
-
-ws, err := sb.Capture(ctx)
-err = sb.Apply(ctx, ws)
-diff, files, err := sb.Diff(ctx, ws, maxLines)
-
-caps := sb.Capabilities()   // capability negotiation: Lifecycle/Exec/FileIO/Diff/Isolated/Containment
-```
-
 ### Supervisor
+
+A rule-based engine that watches the effect bus and emits **interventions** when rules match. Built-in rules guard against destructive operations, high error rates, and stuck detection.
 
 ```go
 sup := supervisor.NewSupervisor(mgr, bus)
