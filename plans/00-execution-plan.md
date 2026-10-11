@@ -581,14 +581,29 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
 
 ## 13. v1.0 readiness checklist (gate after M5)
 
-- [ ] All plans 01–05 acceptance criteria checked; law-coverage map complete.
-- [ ] Golden/store/schema vectors green in CI against current upstream tag;
+- [x] All plans 01–05 acceptance criteria checked; law-coverage map
+      complete. *(Evidence: the parity plan closed at v0.9.0 —
+      `docs/v090-tagged`; `docs/law-coverage.md` maps all 25 laws.)*
+- [x] Golden/store/schema vectors green in CI against current upstream tag;
       upstream shepherd2 version recorded in go-adjacent
-      `testdata/UPSTREAM.md`.
+      `testdata/UPSTREAM.md`. *(Evidence: the `golden drift (vs pinned
+      Python reference)` job is green on every push; the pin
+      `shepherd2@d34d5ca3` and its provenance are recorded in
+      `testdata/UPSTREAM.md` and `golden_provenance_test.go`.)*
 - [ ] Live containerd verification recorded; nested module consumable.
-- [ ] Durability: full restart-recovery suite green on 3 OSes.
-- [ ] `context.Context` throughout; no wall-clock-ordered IDs.
-- [ ] LICENSE, CHANGELOG through v0.9.0, README audited.
+      *(The nested module is consumable — `sandbox/containerd/v0.2.2`
+      passes the release-verify gate and resolves from a clean consumer —
+      but a recorded live daemon verification is still owed.)*
+- [x] Durability: full restart-recovery suite green on 3 OSes. *(Evidence:
+      `recovery_test.go` and the checkpoint/durability suite are untagged
+      and run under `go test -race ./...` in the ubuntu/macos/windows CI
+      matrix, green through v0.12.0.)*
+- [x] `context.Context` throughout; no wall-clock-ordered IDs. *(Evidence:
+      the plan-05 §6 sweep shipped in v0.9.0 (M5); record IDs are
+      content-addressed digests, not timestamps.)*
+- [ ] LICENSE, CHANGELOG through v0.9.0, README audited. *(LICENSE is MIT;
+      the CHANGELOG now covers through v0.12.0; the README audit pass is
+      still owed.)*
 - [ ] yaah integrated on ≥v0.9.0 for one full release cycle without
       workarounds.
 - [ ] Decision: API freeze of Ring-0-adjacent surface (store, canonical,
