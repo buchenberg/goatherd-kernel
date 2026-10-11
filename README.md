@@ -168,17 +168,18 @@ repository's object store.
 Define rules that watch for dangerous patterns and intervene automatically:
 
 ```go
-sup := shepherd.NewSupervisor(mgr, bus)
-sup.AddRule(shepherd.DestructiveToolRule())            // block rm/mv/chmod
-sup.AddRule(shepherd.HighErrorRateRule(0.5, 10))       // alert at 50% errors
-sup.AddRule(shepherd.StuckDetectionRule(3))            // detect loops
+sup := supervisor.NewSupervisor(mgr, bus)
+sup.AddRule(supervisor.DestructiveToolRule())          // advisory warning on destructive calls
+sup.AddRule(supervisor.DestructiveToolGuard())         // deny blockable destructive calls at check time
+sup.AddRule(supervisor.HighErrorRateRule(0.5, 10))     // alert at 50% errors
+sup.AddRule(supervisor.StuckDetectionRule(3))          // detect loops
 sup.Start("orchestrator")
 
 for iv := range sup.Interventions() {
     switch iv.Type {
-    case shepherd.InterventionInject:
+    case supervisor.InterventionInject:
         sup.Inject(iv.ScopeID, "try a different approach")
-    case shepherd.InterventionHalt:
+    case supervisor.InterventionHalt:
         sup.Halt(iv.ScopeID)
     }
 }
@@ -335,7 +336,7 @@ so a wrong path fails loudly instead of serving an empty or modified trace.
 
 The module is organized by component, and the component packages are
 public: import them directly. The root `shepherd` package is the runtime
-layer — the scope tree, handles, settlement, supervision, and recovery
+layer — the scope tree, merge gate, settlement, and recovery, with the task handles and supervision rules engine as their own packages
 that compose the components. The dependency graph is acyclic, with `trace`
 as the leaf:
 
@@ -345,12 +346,15 @@ trace  <-  sandbox  <-  substrate  <-  materialize
   |          |
   +----------+
        |
-  root (shepherd: scope, handles, settlement, supervision, recovery)
+  root (shepherd: scope, merge gate, settlement, recovery)
+       +-- task (runtime handles)      +-- supervisor (rules engine)
 ```
 
 | Package | Contents |
 |---|---|
-| `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, workspace operations, handles (`StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`), the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`), the `Supervisor` rules engine |
+| `shepherd` (root) | the runtime layer — `Scope`, `ScopeManager`, checkpoints, workspace operations, the merge gate, settlement (`Seal`, `Settle`, `RetainedOutput`), recovery (`RecoverScopes`) |
+| `task` | the task runtime — `StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`, `ChildHandle` |
+| `supervisor` | the rules engine — `Supervisor`, `SupervisionRule`, the built-in rules (`DestructiveToolRule`, `HighErrorRateRule`, `StuckDetectionRule`, `DestructiveToolGuard`) |
 | `trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
 | `sandbox` | the `Sandbox` interface, the backend registry |
 | `sandbox/git` | the git backend (in-place, worktree); self-registers as "git" |
@@ -642,10 +646,10 @@ caps := sb.Capabilities()   // capability negotiation: Lifecycle/Exec/FileIO/Dif
 ### Supervisor
 
 ```go
-sup := shepherd.NewSupervisor(mgr, bus)
-sup.AddRule(shepherd.DestructiveToolRule())
-sup.AddRule(shepherd.HighErrorRateRule(0.5, 10))
-sup.AddRule(shepherd.StuckDetectionRule(3))
+sup := supervisor.NewSupervisor(mgr, bus)
+sup.AddRule(supervisor.DestructiveToolRule())
+sup.AddRule(supervisor.HighErrorRateRule(0.5, 10))
+sup.AddRule(supervisor.StuckDetectionRule(3))
 sup.Start("orchestrator")
 defer sup.Close()
 
@@ -734,22 +738,22 @@ store. Every id is derived exactly as the Python reference derives it —
 vectors — so a Go-written trace is readable by `shepherd2` and vice versa.
 
 ```go
-reg := shepherd.NewRegistry()
-reg.Register("MyTask", func(c *shepherd.TaskControl) (map[string]any, error) {
-    c.Publish("note", map[string]any{"msg": "working"})
-    child, err := c.Spawn("LeafTask", inputs, reg)
+reg := task.NewRegistry()
+reg.Register("MyTask", func(c *task.TaskControl) (map[string]any, error) {
+    c.Publish(ctx, "note", map[string]any{"msg": "working"})
+    child, err := c.Spawn(ctx, "LeafTask", inputs, reg)
     if err != nil { return nil, err }
     exec, err := c.AwaitTerminal(ctx, child)
     return map[string]any{"child": exec.ExecutionID}, nil
 })
 
-run, err := shepherd.StartTaskSync(store, reg, "MyTask", "run:fixed-id", inputs)
+run, err := task.StartTaskSync(ctx, store, reg, "MyTask", "run:fixed-id", inputs)
 exec, err := run.Wait(ctx)      // terminal projection: succeeded / failed
 
 // or async: StartTask returns a live handle; Wait blocks until terminal
-run, err = shepherd.StartTask(ctx, store, reg, "MyTask", "", inputs)
+run, err = task.StartTask(ctx, store, reg, "MyTask", "", inputs)
 
-history, err := shepherd.ProjectEffectiveHistoryFromStore(store, reader, cutoff)
+history, err := trace.ProjectEffectiveHistoryFromStore(ctx, store, reader, cutoff)
 // root execution + active children (spawned/adopted; abandoned drops) + published facts
 ```
 

@@ -1,22 +1,26 @@
-package shepherd
+package supervisor_test
 
 // Cross-component integration test: the supervisor's rule engine wired into
-// the merge gate's reviewer (plan 04 §3, T3.4). It stays at the root because
-// it exercises the scope-tree and supervision components together through
-// the public surface — the components' own suites live in internal/scope and
-// internal/supervision.
+// the merge gate's reviewer (plan 04 §3, T3.4). It lives with the supervisor
+// because it exercises the rule engine and the scope tree together through
+// the public surface.
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
+	"github.com/buchenberg/shepherd-kernel-go/supervisor"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // withinDrafts mirrors the merge gate's drafts-prefix rule: prefix itself or
@@ -26,26 +30,34 @@ func withinDrafts(p string) bool {
 }
 
 // TestSupervisor_ReviewMerge covers T3.4: rule engines get merge proposals as
-// events, InterventionDiscard gains a live emitter, and wiring the verdict
+// events, supervisor.InterventionDiscard gains a live emitter, and wiring the verdict
 // into CommitMerge denies without merging.
+
+// fileExists reports whether a path exists in the test repo.
+func fileExists(t *testing.T, dir, name string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
+}
+
 func TestSupervisor_ReviewMerge(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	repo := newTestRepo(t)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	repo := gittest.NewTestRepo(t)
 	parent, _ := mgr.Create("gate:rev-parent", git.NewLocalGitSandbox(repo))
 
-	sup := NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
-	sup.AddRule(SupervisionRule{
+	sup := supervisor.NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
+	sup.AddRule(supervisor.SupervisionRule{
 		Name: "drafts_only_merge_gate",
 		Match: func(e trace.EffectEvent) bool {
-			return e.SchemaRef == SchemaMergeProposed
+			return e.SchemaRef == shepherd.SchemaMergeProposed
 		},
-		Action: func(e trace.EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			paths, _ := e.Payload["paths"].([]string)
 			for _, p := range paths {
 				if !withinDrafts(p) {
-					return &Intervention{
-						Type:    InterventionDiscard,
+					return &supervisor.Intervention{
+						Type:    supervisor.InterventionDiscard,
 						ScopeID: "scope:" + e.TraceOwnerID,
 						Payload: "changes must stay under drafts/",
 						Time:    time.Now(),
@@ -56,8 +68,8 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 		},
 	})
 
-	reviewer := func(p MergeProposal) error {
-		if iv := sup.ReviewMerge(p.ChildScopeID, p); iv != nil && iv.Type == InterventionDiscard {
+	reviewer := func(p shepherd.MergeProposal) error {
+		if iv := sup.ReviewMerge(p.ChildScopeID, p); iv != nil && iv.Type == supervisor.InterventionDiscard {
 			return errors.New(fmt.Sprint(iv.Payload))
 		}
 		return nil
@@ -74,14 +86,14 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	}
 
 	err = mgr.CommitMerge(context.Background(), child.ID(), reviewer)
-	var denied *SupervisorDeniedError
+	var denied *shepherd.SupervisorDeniedError
 	if !errors.As(err, &denied) {
-		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want SupervisorDeniedError", err, err)
+		t.Fatalf("CommitMerge via ReviewMerge: err = %T (%v), want shepherd.SupervisorDeniedError", err, err)
 	}
 	if !strings.Contains(denied.Error(), "drafts/") {
 		t.Errorf("denial text = %q, want the rule's payload as the reason", denied.Error())
 	}
-	if child.State() != ScopeDiscarded {
+	if child.State() != shepherd.ScopeDiscarded {
 		t.Errorf("child state = %s, want discarded", child.State())
 	}
 	// A denial is causal-only: a shared-sandbox child's write is already in
@@ -93,9 +105,9 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	}
 
 	// An in-prefix proposal produces no intervention (approval).
-	good := MergeProposal{
+	good := shepherd.MergeProposal{
 		ChildScopeID: "scope:gate:rev-child",
-		Changes:      []ProposedChange{{Path: "drafts/ok.txt", Kind: ChangeCreate}},
+		Changes:      []shepherd.ProposedChange{{Path: "drafts/ok.txt", Kind: shepherd.ChangeCreate}},
 	}
 	if iv := sup.ReviewMerge(child.ID(), good); iv != nil {
 		t.Errorf("in-prefix proposal: intervention = %+v, want nil", iv)

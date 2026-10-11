@@ -1,4 +1,4 @@
-package shepherd
+package task_test
 
 // Runtime handle tests (plan 02 §5). The acceptance anchor is
 // TestStartTaskSyncMatchesPythonVector: the same fixture task run through
@@ -8,38 +8,41 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
+	"github.com/buchenberg/shepherd-kernel-go/task"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"strings"
 	"testing"
 )
 
 // TestStartTaskSyncMatchesPythonVector is plan 02 §7's acceptance criterion:
-// StartTaskSync's record trace is ID-identical to the Python @task run of
+// task.StartTaskSync's record trace is ID-identical to the Python @task run of
 // the same fixture task. The registry key carries the task_ref the Python
 // runtime derived from the class, and the body publishes and completes with
 // the same payloads.
 func TestStartTaskSyncMatchesPythonVector(t *testing.T) {
-	doc := loadExecutionVectors(t)
+	doc := testvectors.LoadExecutionVectors(t, "../testdata/execution_vectors_v0.json")
 	vec := doc.RunSequence
 
-	reg := NewRegistry()
-	reg.Register(vec.TaskRef, func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register(vec.TaskRef, func(control *task.TaskControl) (map[string]any, error) {
 		if _, err := control.Publish(context.Background(), "note", map[string]any{"msg": "hello <>&", "n": json.Number("1.5")}); err != nil {
 			return nil, err
 		}
 		return map[string]any{"answer": json.Number("42"), "label": "ok"}, nil
 	})
 
-	store := newMemStore(t)
-	run, err := StartTaskSync(context.Background(), store, reg, vec.TaskRef, vec.RunID, vec.Inputs)
+	store := rttest.NewMemStore(t)
+	run, err := task.StartTaskSync(context.Background(), store, reg, vec.TaskRef, vec.RunID, vec.Inputs)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 	if run.ExecutionID() != vec.ExecutionID {
 		t.Errorf("execution id = %s, want %s", run.ExecutionID(), vec.ExecutionID)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, trace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), rttest.Reader, vec.ExecutionID, 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}
@@ -75,15 +78,15 @@ func TestStartTaskSyncMatchesPythonVector(t *testing.T) {
 // failed execution with the error text, and the terminal frontier is
 // publishable (Wait projects failed).
 func TestStartTaskSyncFailedRun(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("BadTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("BadTask", func(control *task.TaskControl) (map[string]any, error) {
 		return nil, errTaskBoom
 	})
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 
-	run, err := StartTaskSync(context.Background(), store, reg, "BadTask", "fail:run", nil)
+	run, err := task.StartTaskSync(context.Background(), store, reg, "BadTask", "fail:run", nil)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 	exec, err := run.Wait(context.Background())
 	if err != nil {
@@ -109,15 +112,15 @@ func (e *taskError) Error() string { return e.msg }
 // TestStartTaskSyncPanicRecovered pins the panic conversion: a panicking
 // body records a failed run rather than crashing the process.
 func TestStartTaskSyncPanicRecovered(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("PanickingTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("PanickingTask", func(control *task.TaskControl) (map[string]any, error) {
 		panic("kaboom")
 	})
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 
-	run, err := StartTaskSync(context.Background(), store, reg, "PanickingTask", "panic:run", nil)
+	run, err := task.StartTaskSync(context.Background(), store, reg, "PanickingTask", "panic:run", nil)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 	exec, err := run.Wait(context.Background())
 	if err != nil {
@@ -131,18 +134,18 @@ func TestStartTaskSyncPanicRecovered(t *testing.T) {
 	}
 }
 
-// TestStartTaskAsyncWait pins the async facade: StartTask returns
+// TestStartTaskAsyncWait pins the async facade: task.StartTask returns
 // immediately and Wait blocks until the terminal frontier exists.
 func TestStartTaskAsyncWait(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("SlowTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("SlowTask", func(control *task.TaskControl) (map[string]any, error) {
 		return map[string]any{"ok": true}, nil
 	})
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 
-	run, err := StartTask(context.Background(), store, reg, "SlowTask", "", nil)
+	run, err := task.StartTask(context.Background(), store, reg, "SlowTask", "", nil)
 	if err != nil {
-		t.Fatalf("StartTask: %v", err)
+		t.Fatalf("task.StartTask: %v", err)
 	}
 	exec, err := run.Wait(context.Background())
 	if err != nil {
@@ -158,25 +161,25 @@ func TestStartTaskAsyncWait(t *testing.T) {
 
 // TestReadExecutionUnknown pins the control's known-child boundary.
 func TestReadExecutionUnknown(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register("IdleTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("IdleTask", func(control *task.TaskControl) (map[string]any, error) {
 		return nil, nil
 	})
-	store := newMemStore(t)
-	run, err := StartTaskSync(context.Background(), store, reg, "IdleTask", "idle:run", nil)
+	store := rttest.NewMemStore(t)
+	run, err := task.StartTaskSync(context.Background(), store, reg, "IdleTask", "idle:run", nil)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 	_ = run
 
 	// ReadExecution goes through a control; reach one via a task that
 	// captures it.
-	var captured *TaskControl
-	reg.Register("CapturingTask", func(control *TaskControl) (map[string]any, error) {
+	var captured *task.TaskControl
+	reg.Register("CapturingTask", func(control *task.TaskControl) (map[string]any, error) {
 		captured = control
 		return nil, nil
 	})
-	if _, err := StartTaskSync(context.Background(), store, reg, "CapturingTask", "capture:run", nil); err != nil {
+	if _, err := task.StartTaskSync(context.Background(), store, reg, "CapturingTask", "capture:run", nil); err != nil {
 		t.Fatalf("capturing run: %v", err)
 	}
 	if _, err := captured.ReadExecution(context.Background(), "exec:unknown"); err == nil {

@@ -1,9 +1,7 @@
-package shepherd
-
-// Runtime handles (plan 02 §5), mirroring shepherd2/runtime/handles.py: a
-// synchronous facade over the store. No scheduler, no goroutine management
-// beyond the one StartTask spawns — callers wrap in goroutines if they want
-// concurrency.
+// Package task is the runtime layer's task handles (plan 02 §5), mirroring
+// shepherd2/runtime/handles.py: a synchronous facade over the trace store.
+// No scheduler, no goroutine management beyond the one StartTask spawns —
+// callers wrap in goroutines if they want concurrency.
 //
 // Python is strictly synchronous; the Go addition is StartTask, which runs
 // the body in a goroutine and hands back a live Run whose Wait blocks until
@@ -17,6 +15,7 @@ package shepherd
 // Go's TaskFunc returns (map, error); a failed run records err.Error() as
 // the failure text, and a panic records "panic: <value>". The record shapes
 // are identical — only the error text's provenance differs.
+package task
 
 import (
 	"context"
@@ -24,9 +23,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"sync"
 	"time"
+
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // trustedHandlesReadContext mirrors Python's TRUSTED_READ_CONTEXT.

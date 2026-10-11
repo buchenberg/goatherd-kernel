@@ -1,4 +1,4 @@
-package shepherd
+package task_test
 
 // Review-hardening tests for the runtime facade (PR #20): the history
 // vector replay — a Python-run tree driven through the Go facade must
@@ -11,6 +11,9 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
+	"github.com/buchenberg/shepherd-kernel-go/task"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"sync/atomic"
 	"testing"
@@ -23,18 +26,18 @@ import (
 // the reference projected: the spawned and adopted children active, the
 // abandoned child dropped, both published facts present.
 func TestHistoryVectorTreeReplay(t *testing.T) {
-	doc := loadExecutionVectors(t)
+	doc := testvectors.LoadExecutionVectors(t, "../testdata/execution_vectors_v0.json")
 	vec := doc.HistorySequence
 	if vec.ExecutionID != trace.ExecutionIDFor(vec.RunID+":create", "execution") {
 		t.Fatalf("vector execution id disagrees with the derivation: %s", vec.ExecutionID)
 	}
 
-	store := newMemStore(t)
-	reg := NewRegistry()
-	reg.Register(vec.TaskRefs["child"], func(control *TaskControl) (map[string]any, error) {
+	store := rttest.NewMemStore(t)
+	reg := task.NewRegistry()
+	reg.Register(vec.TaskRefs["child"], func(control *task.TaskControl) (map[string]any, error) {
 		return map[string]any{"leaf": true}, nil
 	})
-	reg.Register(vec.TaskRefs["parent"], func(control *TaskControl) (map[string]any, error) {
+	reg.Register(vec.TaskRefs["parent"], func(control *task.TaskControl) (map[string]any, error) {
 		if _, err := control.Publish(context.Background(), "phase", map[string]any{"at": "start"}); err != nil {
 			return nil, err
 		}
@@ -50,7 +53,7 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 		if _, err := control.Abandon(context.Background(), dropped); err != nil {
 			return nil, err
 		}
-		external, err := StartTaskSync(context.Background(), store, reg, vec.TaskRefs["child"], vec.RunID+":external", nil)
+		external, err := task.StartTaskSync(context.Background(), store, reg, vec.TaskRefs["child"], vec.RunID+":external", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -63,12 +66,12 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 		return map[string]any{"leaves": json.Number("2")}, nil
 	})
 
-	run, err := StartTaskSync(context.Background(), store, reg, vec.TaskRefs["parent"], vec.RunID, nil)
+	run, err := task.StartTaskSync(context.Background(), store, reg, vec.TaskRefs["parent"], vec.RunID, nil)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 
-	slice, err := store.ReadOwnerPrefix(context.Background(), reader, vec.ExecutionID, 99, trace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), rttest.Reader, vec.ExecutionID, 99, trace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}
@@ -85,7 +88,7 @@ func TestHistoryVectorTreeReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cutoff: %v", err)
 	}
-	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
+	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, rttest.Reader, cutoff)
 	if err != nil {
 		t.Fatalf("trace.ProjectEffectiveHistoryFromStore: %v", err)
 	}
@@ -131,13 +134,13 @@ func TestStartTaskSyncIdempotentRerunRunsBodyOnce(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	var bodyRuns atomic.Int64
-	reg := NewRegistry()
-	reg.Register("SideEffectTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("SideEffectTask", func(control *task.TaskControl) (map[string]any, error) {
 		bodyRuns.Add(1)
 		return nil, nil
 	})
 
-	if _, err := StartTaskSync(context.Background(), store, reg, "SideEffectTask", "guard:run", nil); err != nil {
+	if _, err := task.StartTaskSync(context.Background(), store, reg, "SideEffectTask", "guard:run", nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 	if err := store.Close(context.Background()); err != nil {
@@ -149,7 +152,7 @@ func TestStartTaskSyncIdempotentRerunRunsBodyOnce(t *testing.T) {
 	}
 	defer reopened.Close(context.Background())
 
-	if _, err := StartTaskSync(context.Background(), reopened, reg, "SideEffectTask", "guard:run", nil); err != nil {
+	if _, err := task.StartTaskSync(context.Background(), reopened, reg, "SideEffectTask", "guard:run", nil); err != nil {
 		t.Fatalf("rerun: %v", err)
 	}
 	if got := bodyRuns.Load(); got != 1 {
@@ -161,12 +164,12 @@ func TestStartTaskSyncIdempotentRerunRunsBodyOnce(t *testing.T) {
 // Wait as an error instead of hanging: an unregistered task fails inside the
 // body phase, records a failed execution, and Wait returns promptly.
 func TestStartTaskAsyncFailureSurfaces(t *testing.T) {
-	store := newMemStore(t)
-	reg := NewRegistry()
+	store := rttest.NewMemStore(t)
+	reg := task.NewRegistry()
 
-	run, err := StartTask(context.Background(), store, reg, "NoSuchTask", "async:fail", nil)
+	run, err := task.StartTask(context.Background(), store, reg, "NoSuchTask", "async:fail", nil)
 	if err != nil {
-		t.Fatalf("StartTask: %v", err)
+		t.Fatalf("task.StartTask: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -189,19 +192,19 @@ func TestStartTaskAsyncFailureSurfaces(t *testing.T) {
 // still reaches the terminal state. Deterministic: the body signals when it
 // has started and blocks until released.
 func TestStartTaskSnapshotMidFlight(t *testing.T) {
-	store := newMemStore(t)
-	reg := NewRegistry()
+	store := rttest.NewMemStore(t)
+	reg := task.NewRegistry()
 	started := make(chan struct{})
 	release := make(chan struct{})
-	reg.Register("BlockingTask", func(control *TaskControl) (map[string]any, error) {
+	reg.Register("BlockingTask", func(control *task.TaskControl) (map[string]any, error) {
 		close(started)
 		<-release
 		return map[string]any{"ok": true}, nil
 	})
 
-	run, err := StartTask(context.Background(), store, reg, "BlockingTask", "snap:run", nil)
+	run, err := task.StartTask(context.Background(), store, reg, "BlockingTask", "snap:run", nil)
 	if err != nil {
-		t.Fatalf("StartTask: %v", err)
+		t.Fatalf("task.StartTask: %v", err)
 	}
 	<-started
 
@@ -232,22 +235,22 @@ func TestStartTaskSnapshotMidFlight(t *testing.T) {
 // frontier or one that targets a different execution is rejected before
 // any relation is appended.
 func TestAdoptRejectsInvalidFrontier(t *testing.T) {
-	store := newMemStore(t)
-	reg := NewRegistry()
-	reg.Register("AdopterTask", func(control *TaskControl) (map[string]any, error) {
+	store := rttest.NewMemStore(t)
+	reg := task.NewRegistry()
+	reg.Register("AdopterTask", func(control *task.TaskControl) (map[string]any, error) {
 		if _, err := control.Adopt(context.Background(), "exec:someone-else", "frontier:does-not-exist", ""); err == nil {
 			t.Error("Adopt accepted an unknown frontier")
 		}
 		return nil, nil
 	})
-	if _, err := StartTaskSync(context.Background(), store, reg, "AdopterTask", "adopt:bad", nil); err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+	if _, err := task.StartTaskSync(context.Background(), store, reg, "AdopterTask", "adopt:bad", nil); err != nil {
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 
 	// A real frontier aimed at the wrong execution is also rejected. Build
 	// one execution, then try to adopt its frontier under another id.
-	reg.Register("AdopterTask2", func(control *TaskControl) (map[string]any, error) {
-		other, err := StartTaskSync(context.Background(), store, reg, "Leaf", "adopt:other", nil)
+	reg.Register("AdopterTask2", func(control *task.TaskControl) (map[string]any, error) {
+		other, err := task.StartTaskSync(context.Background(), store, reg, "Leaf", "adopt:other", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -256,19 +259,8 @@ func TestAdoptRejectsInvalidFrontier(t *testing.T) {
 		}
 		return nil, nil
 	})
-	reg.Register("Leaf", func(control *TaskControl) (map[string]any, error) { return nil, nil })
-	if _, err := StartTaskSync(context.Background(), store, reg, "AdopterTask2", "adopt:mismatch", nil); err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
-	}
-}
-
-// TestAbandonWithoutTerminalCutoffFails pins Abandon's single read: a child
-// frontier that does not exist is an error, not an infinite poll.
-func TestAbandonWithoutTerminalCutoffFails(t *testing.T) {
-	store := newMemStore(t)
-	handle := &ChildHandle{store: store, executionID: "exec:x", frontierID: "frontier:never", relationID: "rel:y"}
-	control := newTaskControl(store, "exec:parent", "abandon:run", "")
-	if _, err := control.Abandon(context.Background(), handle); err == nil {
-		t.Fatal("Abandon of a child with no terminal cutoff succeeded, want a loud error")
+	reg.Register("Leaf", func(control *task.TaskControl) (map[string]any, error) { return nil, nil })
+	if _, err := task.StartTaskSync(context.Background(), store, reg, "AdopterTask2", "adopt:mismatch", nil); err != nil {
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 }

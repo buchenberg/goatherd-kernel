@@ -1,15 +1,20 @@
-package shepherd
+package shepherd_test
 
 import (
 	"context"
-	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
+	"github.com/buchenberg/shepherd-kernel-go/supervisor"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // TestIntegration_RollbackScenario exercises the full rollback flow:
@@ -20,17 +25,17 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Infrastructure
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 	store.WithBus(bus)
-	mgr := NewScopeManager(store)
+	mgr := shepherd.NewScopeManager(store)
 
 	// 2. Git repo with initial code
-	repo := newTestRepo(t)
-	writeFile(t, repo, "main.go", "package main\n\nfunc main() {}\n")
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-m", "initial code")
+	repo := gittest.NewTestRepo(t)
+	gittest.WriteFile(t, repo, "main.go", "package main\n\nfunc main() {}\n")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "initial code")
 
 	// 3. Create a scope for the sub-agent
 	scope, err := mgr.Create("sub:worker", git.NewLocalGitSandbox(repo))
@@ -38,31 +43,31 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	// 4. Checkpoint BEFORE the sub-agent runs
+	// 4. shepherd.Checkpoint BEFORE the sub-agent runs
 	conversationSnapshot := []byte(`{"messages":["system prompt","task: fix the bug"]}`)
 	cp, err := mgr.CreateCheckpoint(ctx, scope.ID(), conversationSnapshot)
 	if err != nil {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
-	if cp.State != CheckpointValid {
+	if cp.State != shepherd.CheckpointValid {
 		t.Fatalf("expected valid checkpoint, got %s", cp.State)
 	}
 
 	// 5. Simulate the sub-agent making destructive changes
-	writeFile(t, repo, "main.go", "BROKEN CODE THAT SHOULD BE REVERTED")
-	writeFile(t, repo, "new_file.go", "UNWANTED NEW FILE")
+	gittest.WriteFile(t, repo, "main.go", "BROKEN CODE THAT SHOULD BE REVERTED")
+	gittest.WriteFile(t, repo, "new_file.go", "UNWANTED NEW FILE")
 	if err := os.Remove(filepath.Join(repo, "README.md")); err != nil {
 		t.Fatalf("remove README: %v", err)
 	}
 
-	// 6. Supervisor decides to roll back
+	// 6. supervisor.Supervisor decides to roll back
 	snapshot, err := mgr.RestoreCheckpoint(ctx, cp.ID)
 	if err != nil {
 		t.Fatalf("RestoreCheckpoint: %v", err)
 	}
 
 	// 7. Verify workspace restored
-	mainGo := readFile(t, repo, "main.go")
+	mainGo := gittest.ReadFile(t, repo, "main.go")
 	if !strings.Contains(mainGo, "package main") || strings.Contains(mainGo, "BROKEN") {
 		t.Errorf("main.go not restored: %q", mainGo)
 	}
@@ -71,7 +76,7 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 		t.Error("untracked file new_file.go should be removed")
 	}
 
-	if readme := readFile(t, repo, "README.md"); readme != "# Test" {
+	if readme := gittest.ReadFile(t, repo, "README.md"); readme != "# Test" {
 		t.Errorf("README.md not restored: %q", readme)
 	}
 
@@ -90,11 +95,11 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 	for _, id := range slice.FactIDs() {
 		env := slice.FactsByID[id].GetEnvelope()
 		switch env.SchemaRef {
-		case SchemaCheckpointCreated:
+		case shepherd.SchemaCheckpointCreated:
 			if env.Mode == trace.Declaration {
 				foundCreate = true
 			}
-		case SchemaCheckpointRestored:
+		case shepherd.SchemaCheckpointRestored:
 			if env.Mode == trace.Capture {
 				foundRestore = true
 			}
@@ -111,12 +116,12 @@ func TestIntegration_RollbackScenario(t *testing.T) {
 // TestIntegration_SynchronousDeny simulates a supervisor blocking a
 // destructive tool call before it executes, using CheckCall.
 func TestIntegration_SynchronousDeny(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
 	// Install the blocking guard
-	supervisor.AddRule(DestructiveToolGuard())
+	sup.AddRule(supervisor.DestructiveToolGuard())
 
 	// Simulate the agent loop's pre-tool check for a destructive bash command
 	event := trace.EffectEvent{
@@ -127,11 +132,11 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 		Payload:      map[string]any{"cmd": "rm -rf /important"},
 	}
 
-	iv := supervisor.CheckCall(event)
+	iv := sup.CheckCall(event)
 	if iv == nil {
 		t.Fatal("expected intervention from CheckCall")
 	}
-	if iv.Type != InterventionDeny {
+	if iv.Type != supervisor.InterventionDeny {
 		t.Errorf("expected deny, got %s", iv.Type)
 	}
 	if iv.ScopeID != "scope:sub:worker" {
@@ -147,8 +152,8 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 		SchemaRef:    "yaah.tool.bash.v1",
 		Payload:      map[string]any{"cmd": "go test ./..."},
 	}
-	safeIV := supervisor.CheckCall(safeEvent)
-	if safeIV == nil || safeIV.Type != InterventionDeny {
+	safeIV := sup.CheckCall(safeEvent)
+	if safeIV == nil || safeIV.Type != supervisor.InterventionDeny {
 		t.Errorf("bash should be denied under default-deny, got intervention: %v", safeIV)
 	}
 
@@ -160,7 +165,7 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 		SchemaRef:    "yaah.tool.read.v1",
 		Payload:      map[string]any{"path": "/tmp/x"},
 	}
-	if readIV := supervisor.CheckCall(readEvent); readIV != nil {
+	if readIV := sup.CheckCall(readEvent); readIV != nil {
 		t.Errorf("read_file should be approved, got intervention: %v", readIV)
 	}
 }
@@ -169,13 +174,13 @@ func TestIntegration_SynchronousDeny(t *testing.T) {
 // fork a child scope, checkpoint the child, do work, restore, work again.
 func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	ctx := context.Background()
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
 
-	repo := newTestRepo(t)
-	writeFile(t, repo, "app.go", "package main\n")
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-m", "add app.go")
+	repo := gittest.NewTestRepo(t)
+	gittest.WriteFile(t, repo, "app.go", "package main\n")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "add app.go")
 
 	// Parent scope
 	parent, err := mgr.Create("sub:parent", git.NewLocalGitSandbox(repo))
@@ -189,14 +194,14 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 		t.Fatalf("fork: %v", err)
 	}
 
-	// Checkpoint the child
+	// shepherd.Checkpoint the child
 	cp, err := mgr.CreateCheckpoint(ctx, child.ID(), []byte("v1"))
 	if err != nil {
 		t.Fatalf("checkpoint: %v", err)
 	}
 
 	// Speculative work
-	writeFile(t, repo, "app.go", "CHANGED SPECULATIVELY")
+	gittest.WriteFile(t, repo, "app.go", "CHANGED SPECULATIVELY")
 
 	// Restore the checkpoint
 	if _, err := mgr.RestoreCheckpoint(ctx, cp.ID); err != nil {
@@ -204,18 +209,18 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 	}
 
 	// Verify reverted
-	if got := readFile(t, repo, "app.go"); strings.TrimSpace(got) != "package main" {
+	if got := gittest.ReadFile(t, repo, "app.go"); strings.TrimSpace(got) != "package main" {
 		t.Errorf("expected 'package main', got %q", got)
 	}
 
 	// The child is still active — can do different work
-	writeFile(t, repo, "app.go", "DIFFERENT ATTEMPT")
+	gittest.WriteFile(t, repo, "app.go", "DIFFERENT ATTEMPT")
 
 	// Merge the child into parent (accept the speculative work)
 	if err := parent.Merge(child); err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if child.State() != ScopeMerged {
+	if child.State() != shepherd.ScopeMerged {
 		t.Errorf("expected child merged, got %s", child.State())
 	}
 }
@@ -224,31 +229,31 @@ func TestIntegration_CheckpointForkRestore(t *testing.T) {
 // checkpoints and restoring to an earlier one.
 func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	ctx := context.Background()
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
 
-	repo := newTestRepo(t)
-	writeFile(t, repo, "main.go", "version 1")
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-m", "v1")
+	repo := gittest.NewTestRepo(t)
+	gittest.WriteFile(t, repo, "main.go", "version 1")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "v1")
 
 	scope, err := mgr.Create("sub:multi", git.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	// Checkpoint 1
+	// shepherd.Checkpoint 1
 	cp1, err := mgr.CreateCheckpoint(ctx, scope.ID(), []byte("state-1"))
 	if err != nil {
 		t.Fatalf("cp1: %v", err)
 	}
 
 	// Work + commit
-	writeFile(t, repo, "main.go", "version 2")
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-m", "v2")
+	gittest.WriteFile(t, repo, "main.go", "version 2")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "v2")
 
-	// Checkpoint 2
+	// shepherd.Checkpoint 2
 	time.Sleep(10 * time.Millisecond) // ensure different timestamps
 	cp2, err := mgr.CreateCheckpoint(ctx, scope.ID(), []byte("state-2"))
 	if err != nil {
@@ -265,13 +270,13 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	}
 
 	// Work again
-	writeFile(t, repo, "main.go", "version 3")
+	gittest.WriteFile(t, repo, "main.go", "version 3")
 
 	// Restore to cp2 (the most recent checkpoint)
 	if _, err := mgr.RestoreCheckpoint(ctx, cp2.ID); err != nil {
 		t.Fatalf("restore cp2: %v", err)
 	}
-	if got := readFile(t, repo, "main.go"); strings.TrimSpace(got) != "version 2" {
+	if got := gittest.ReadFile(t, repo, "main.go"); strings.TrimSpace(got) != "version 2" {
 		t.Errorf("expected 'version 2' after restoring cp2, got %q", got)
 	}
 
@@ -283,7 +288,7 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 	if string(snap) != "state-1" {
 		t.Errorf("expected 'state-1' snapshot, got %q", snap)
 	}
-	if got := readFile(t, repo, "main.go"); strings.TrimSpace(got) != "version 1" {
+	if got := gittest.ReadFile(t, repo, "main.go"); strings.TrimSpace(got) != "version 1" {
 		t.Errorf("expected 'version 1' after restoring cp1, got %q", got)
 	}
 }
@@ -294,13 +299,13 @@ func TestIntegration_MultipleCheckpoints(t *testing.T) {
 // is applied to the parent's in-place tree.
 func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	ctx := context.Background()
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
 
-	repo := newTestRepo(t)
-	writeFile(t, repo, "base.txt", "base")
-	mustGit(t, repo, "add", "-A")
-	mustGit(t, repo, "commit", "-m", "base")
+	repo := gittest.NewTestRepo(t)
+	gittest.WriteFile(t, repo, "base.txt", "base")
+	gittest.MustGit(t, repo, "add", "-A")
+	gittest.MustGit(t, repo, "commit", "-m", "base")
 
 	parent, err := mgr.Create("sub:orchestrator", git.NewLocalGitSandbox(repo))
 	if err != nil {
@@ -315,7 +320,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 
 	root := t.TempDir()
 	type variant struct {
-		child    *Scope
+		child    *shepherd.Scope
 		worktree string
 		state    trace.WorkspaceState
 		file     string
@@ -344,8 +349,8 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 		}
 
 		// The variant works only inside its own worktree.
-		writeFile(t, v.worktree, v.file, v.content)
-		if fileExists(t, repo, v.file) {
+		gittest.WriteFile(t, v.worktree, v.file, v.content)
+		if fileExistsT(t, repo, v.file) {
 			t.Fatalf("variant %d leaked into the main tree before choose", i)
 		}
 
@@ -369,7 +374,7 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 
 	// The parent's tree is untouched by either variant.
 	for _, v := range variants {
-		if fileExists(t, repo, v.file) {
+		if fileExistsT(t, repo, v.file) {
 			t.Errorf("main tree must not contain %s before choose", v.file)
 		}
 	}
@@ -378,17 +383,17 @@ func TestIntegration_WorktreeForkDiscardChoose(t *testing.T) {
 	if err := parent.ApplyWorkspace(ctx, variants[0].state); err != nil {
 		t.Fatalf("apply winner: %v", err)
 	}
-	if got := readFile(t, repo, variants[0].file); got != variants[0].content {
+	if got := gittest.ReadFile(t, repo, variants[0].file); got != variants[0].content {
 		t.Errorf("%s = %q, want %q", variants[0].file, got, variants[0].content)
 	}
-	if fileExists(t, repo, variants[1].file) {
+	if fileExistsT(t, repo, variants[1].file) {
 		t.Errorf("losing variant %s must not be applied", variants[1].file)
 	}
 
 	// No worktree directories or registrations may survive.
 	for _, v := range variants {
-		for _, p := range worktreePaths(t, repo) {
-			if samePath(t, p, v.worktree) {
+		for _, p := range gittest.WorktreePaths(t, repo) {
+			if gittest.SamePath(t, p, v.worktree) {
 				t.Errorf("worktree %s still registered after discard", p)
 			}
 		}

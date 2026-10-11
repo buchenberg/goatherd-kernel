@@ -1,45 +1,28 @@
 package shepherd
 
-// Shared test helpers for the runtime-layer tests. These mirror the helpers
-// that live with the trace store's own tests in internal/trace; test code is
-// not API surface, so the duplication is deliberate.
+// Shared test helpers for the runtime-layer tests. The fixtures live in
+// internal/rttest so the external test packages (shepherd_test, task_test,
+// supervisor_test) share them; these wrappers keep the root package's
+// in-package tests unchanged. Test code is not API surface.
 
 import (
-	"context"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"testing"
 
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
+
 	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
 	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
 )
 
-func newMemStore(t *testing.T) *trace.SQLiteTraceStore {
-	t.Helper()
-	store, err := trace.NewSQLiteTraceStore(":memory:")
-	if err != nil {
-		t.Fatalf("trace.NewSQLiteTraceStore: %v", err)
-	}
-	t.Cleanup(func() { store.Close(context.Background()) })
-	return store
-}
+func newMemStore(t *testing.T) *trace.SQLiteTraceStore { return rttest.NewMemStore(t) }
 
-var trustedAppend = trace.AppendContext{
-	ActorRef:             "runtime:conformance",
-	PresentedWitnessRefs: []string{"trusted:internal"},
-	SchemaVersionSet:     "shepherd2-slice-a",
-	TrustMode:            "internal",
-}
+var trustedAppend = rttest.TrustedAppend
 
-var reader = trace.ReadContext{ActorRef: "reader", VisibilityProfile: trace.VisibilityPayload}
+var reader = rttest.Reader
 
 func draft(kind string, mode trace.RecordMode, payload map[string]any, causedBy ...string) trace.RecordDraft {
-	return trace.RecordDraft{
-		KindLabel:       kind,
-		Mode:            mode,
-		SchemaRef:       "shepherd2.conformance." + kind + ".v1",
-		Payload:         payload,
-		CausedByFactIDs: causedBy,
-	}
+	return rttest.Draft(kind, mode, payload, causedBy...)
 }
 
 func newTestRepo(t *testing.T) string { return gittest.NewTestRepo(t) }
