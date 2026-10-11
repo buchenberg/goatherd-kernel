@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestExample_BestOfN(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, err := mgr.Create("bestofn", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("bestofn", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestExample_RetryUntilAcceptable(t *testing.T) {
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, err := mgr.Create("retry", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("retry", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
@@ -217,7 +218,7 @@ func TestExample_ApplyOntoMovedWorkspace(t *testing.T) {
 	mgr := NewScopeManager(newMemStore(t))
 	repo := newTestRepo(t)
 	ctx := context.Background()
-	parent, err := mgr.Create("moved", NewLocalGitSandbox(repo))
+	parent, err := mgr.Create("moved", sandbox.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}

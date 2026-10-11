@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	store := newMemStore(t)
 	mgr := NewScopeManager(store)
 	repo := newTestRepo(t)
-	parent, _ := mgr.Create("gate:rev-parent", NewLocalGitSandbox(repo))
+	parent, _ := mgr.Create("gate:rev-parent", sandbox.NewLocalGitSandbox(repo))
 
 	sup := NewSupervisor(mgr, nil) // CheckCall-only: no bus needed
 	sup.AddRule(SupervisionRule{

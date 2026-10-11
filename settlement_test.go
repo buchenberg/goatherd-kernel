@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"os"
 	"path/filepath"
 	"strings"

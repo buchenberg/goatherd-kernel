@@ -13,7 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	sandbox "github.com/buchenberg/shepherd-kernel-go/internal/sandbox"
+	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"io/fs"
 	"os"
