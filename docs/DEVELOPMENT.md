@@ -55,6 +55,16 @@ dev plans. This document carries only what is still in motion.
 Revisit triggers, not commitments (carried from the archived parity plan
 §5):
 
+- **Settlement over dirty baselines & recoverable sandbox identity**
+  (proposed: [`06-settlement-recovery-upstream.md`](06-settlement-recovery-upstream.md)).
+  Two consumer-verified gaps from yaah's adoption: captures of identical
+  dirty trees never digest equal (stash commits mint per capture), so
+  `Settle(Select)` cannot pass a dirty fork baseline, and `Diff` bases on
+  the captured HEAD rather than the captured state, so a dirty baseline
+  always self-overlaps `Settle(Apply)`; and fork records carry no sandbox
+  address, so hosts must keep their own worktree registries to re-adopt
+  isolated children. Trigger: the plan is drafted — pick it up with the
+  next minor.
 - **Landlock exec-wrapper** for git-sandbox Exec (Linux): a `JailedExec`
   option on `SandboxSpec` would bring OS enforcement to the portable
   backend. Trigger: a consumer runs untrusted code without containerd.
