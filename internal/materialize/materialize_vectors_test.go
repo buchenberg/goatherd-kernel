@@ -16,7 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	substrate "github.com/buchenberg/shepherd-kernel-go/internal/substrate"
+	substrate "github.com/buchenberg/shepherd-kernel-go/substrate"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"

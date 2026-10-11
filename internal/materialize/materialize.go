@@ -17,7 +17,7 @@ package materialize
 import (
 	"context"
 	"crypto/sha256"
-	substrate "github.com/buchenberg/shepherd-kernel-go/internal/substrate"
+	substrate "github.com/buchenberg/shepherd-kernel-go/substrate"
 
 	"encoding/hex"
 
