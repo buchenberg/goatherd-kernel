@@ -1,3 +1,12 @@
+// Package substrate is the declare-then-capture contract for world-side
+// effects: a Substrate applies already-recorded declaration records and
+// returns capture drafts - it never appends them itself; the materialize
+// orchestrator owns the append. Substrates register in a fail-closed
+// registry and are selected by the substrate_ref stamped in the
+// declarations' own witnesses. The echo substrate is the test fixture, the
+// KV substrate is the reference world-side store, and the workspace
+// substrate bridges the Sandbox interface so recorded file-write and exec
+// intents reach a real workspace.
 package substrate
 
 // Minimal vNext substrate contract and registry (plan 03 §1), mirroring

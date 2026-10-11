@@ -1,3 +1,10 @@
+// Package sandbox is the execution boundary of the kernel: the Sandbox
+// interface a scope's workspace operations run against, the in-place and
+// worktree git backends built into the core module, and the fail-closed
+// backend registry behind OpenSandbox. Backends report their capabilities
+// honestly - unsupported operations return ErrUnsupported rather than
+// pretending - and Capture/Diff never mutate the caller's index. The
+// containerd backend ships as the nested module sandbox/containerd.
 package sandbox
 
 import (

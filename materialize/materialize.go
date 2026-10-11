@@ -1,3 +1,9 @@
+// Package materialize orchestrates the kernel's materialize transition:
+// it reads the addressed declaration records, dispatches them to the
+// witness-stamped substrate, appends the returned capture drafts, and
+// commits the completed-intent ledger that makes replays idempotent. The
+// ordering law is load-bearing: captures are appended before the ledger
+// entry, so a crash between them replays safely under the same intent id.
 package materialize
 
 // vNext materialization orchestration over the Ring 0 trace store (plan 03

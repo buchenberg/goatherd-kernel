@@ -1,3 +1,12 @@
+// Package trace is the kernel's record core: the append-only, content-
+// addressed trace model, canonical JSON encoding, the SQLite trace store,
+// the effect bus, and the execution/history/relation projections read from
+// it. It is the leaf of the component graph - every other package builds
+// on this vocabulary, and nothing here imports another shepherd package.
+//
+// The record digests, canonical JSON flavour, and schema names are frozen
+// ABI surface shared with the Python reference implementation; the fixture
+// vectors in testdata pin them.
 package trace
 
 import "sort"
