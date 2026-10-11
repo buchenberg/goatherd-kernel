@@ -5,7 +5,7 @@ package shepherd
 // Ported case-for-case from shepherd2/tests/test_trace_store_conformance.py.
 // Subtests carry the Python test names (minus the test_ prefix) so the mapping
 // is auditable without leaving this file; the full table, including the N/A
-// rationale, lives in plans/01-abi-conformance.md §5.
+// rationale, lives in docs/history/01-abi-conformance.md §5.
 //
 // The suite is parametrized over a store factory so any future backend (plan
 // 03 substrates, an in-memory test store) is gated by the same behavior, which

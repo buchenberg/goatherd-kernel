@@ -1,19 +1,23 @@
 # Shepherd ↔ shepherd-kernel-go Parity Plan
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Date**: 2026-09-16 · **Go branch**: `feat/containerd` (`48b16fb`, v0.4.0-content, untagged) · **Python reference**: `shepherd-workspace` 0.3.1 (main @ `d34d5ca3`), `shepherd2` 0.1.0a0
 
 This document compares the Python Shepherd monorepo (`../shepherd`) with this Go
 port and defines a scoped roadmap for bringing them closer to parity. Detailed
-workstream plans live in `plans/`:
+workstream plans live in `docs/history/`:
 
 | Plan | Workstream | Priority |
 |---|---|---|
-| [plans/00-execution-plan.md](plans/00-execution-plan.md) | **Phased execution master** — task-level breakdown (T0.1–T4.7), milestones/version plan, dependency graph, risks, verification strategy | — |
-| [plans/01-abi-conformance.md](plans/01-abi-conformance.md) | Canonical-JSON byte identity, golden vectors, conformance suite, ABI laws | **P0** |
-| [plans/02-schemas-runtime.md](plans/02-schemas-runtime.md) | shepherd2 schema rings (execution, relations, history) + runtime handles | P1 |
-| [plans/03-substrate-materialization.md](plans/03-substrate-materialization.md) | vNext substrate registry + materialization dispatch, bridged to `Sandbox` | P1 |
-| [plans/04-supervision-settlement.md](plans/04-supervision-settlement.md) | Check-at-commit merge gate, consume-once settlement, fork-and-choose recipes | P2 |
-| [plans/05-persistence-hygiene-release.md](plans/05-persistence-hygiene-release.md) | Release/tagging, persistence & recovery, bug batch, CI | **P0 (process)** |
+| [plans/00-execution-plan.md](00-execution-plan.md) | **Phased execution master** — task-level breakdown (T0.1–T4.7), milestones/version plan, dependency graph, risks, verification strategy | — |
+| [plans/01-abi-conformance.md](01-abi-conformance.md) | Canonical-JSON byte identity, golden vectors, conformance suite, ABI laws | **P0** |
+| [plans/02-schemas-runtime.md](02-schemas-runtime.md) | shepherd2 schema rings (execution, relations, history) + runtime handles | P1 |
+| [03-substrate-materialization.md](03-substrate-materialization.md) | vNext substrate registry + materialization dispatch, bridged to `Sandbox` | P1 |
+| [plans/04-supervision-settlement.md](04-supervision-settlement.md) | Check-at-commit merge gate, consume-once settlement, fork-and-choose recipes | P2 |
+| [plans/05-persistence-hygiene-release.md](05-persistence-hygiene-release.md) | Release/tagging, persistence & recovery, bug batch, CI | **P0 (process)** |
 
 ---
 

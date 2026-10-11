@@ -1,5 +1,9 @@
 # Shepherd → Go Port: Detailed Gap Report
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 > **Status update (v0.4.0, 2026-09-15).** This report is the original
 > point-in-time gap analysis. Its subsystem reasoning still explains *why* the
 > port looks the way it does, so the analysis below is retained verbatim — but

@@ -1,5 +1,9 @@
 # Plan 04 — Check-at-Commit Supervision & Consume-Once Settlement
 
+> **Archived.** This plan is complete; its status is frozen. The living
+> plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).
+
+
 **Phase**: 3 · **Priority**: P2 · **Estimate**: ~2–3 weeks (~800–1200 LOC + tests)
 **Goal**: Adopt the two patterns that make Python Shepherd's supervision and
 output-review story compelling, expressed on the Go port's existing
