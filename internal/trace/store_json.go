@@ -1,6 +1,8 @@
 package trace
 
-// Serialization helpers for the SQLite trace store: canonical-shaped\n// JSON for receipts, bodies, and contexts, plus the map and slice\n// utilities shared across the store's seams.
+// Serialization helpers for the SQLite trace store: canonical-shaped
+// JSON for receipts, bodies, and contexts, plus the map and slice
+// utilities shared across the store seams.
 
 import (
 	"encoding/json"

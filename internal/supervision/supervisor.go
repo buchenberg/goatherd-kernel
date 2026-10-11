@@ -36,7 +36,7 @@ type SupervisionRule struct {
 	// Match returns true if this rule applies to the effect event.
 	Match func(trace.EffectEvent) bool
 	// Action returns the intervention to take, or nil for observe-only.
-	// The scope parameter is the scope.ScopeManager lookup for the event's owner.
+	// The scope parameter is the ScopeManager lookup for the event's owner.
 	Action func(event trace.EffectEvent) *Intervention
 }
 
@@ -224,7 +224,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 // InterventionDiscard or InterventionDeny.
 //
 // The proposal is presented to the rules as a synthetic effect event — Mode
-// trace.Declaration, SchemaRef shepherd.merge.proposed.v1, KindLabel
+// Declaration, SchemaRef shepherd.merge.proposed.v1, KindLabel
 // "merge:proposed" — carrying the changed paths, so the same rule set that
 // watches tool calls can watch merges. This is the emitter that makes
 // InterventionDiscard reachable: before it, nothing in the kernel produced

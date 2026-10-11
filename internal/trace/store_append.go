@@ -1,6 +1,9 @@
 package trace
 
-// The append path of the SQLite trace store: the public Append and\n// PreviewRecordIDs API, the in-transaction orchestration (appendInTx,\n// prepareAppend), and the batch validation, digest, and causal-parent\n// checks it runs.
+// The append path of the SQLite trace store: the public Append and
+// PreviewRecordIDs API, the in-transaction orchestration (appendInTx,
+// prepareAppend), and the batch validation, digest, and causal-parent
+// checks it runs.
 
 import (
 	"context"

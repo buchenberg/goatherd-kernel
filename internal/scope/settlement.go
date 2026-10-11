@@ -16,7 +16,7 @@ import (
 // such, not pretending to be shepherd2.run_output.v1.
 const (
 	// SchemaRunOutputSealed is recorded on the sealing scope's owner path
-	// when an output is sealed. trace.Declaration: the sealing is stated intent
+	// when an output is sealed. Declaration:: the sealing is stated intent
 	// that the settlement records then observe.
 	SchemaRunOutputSealed = "shepherd.run_output.sealed.v1"
 	// SchemaRunOutputSettled is recorded on the same owner path when the
@@ -239,7 +239,7 @@ func (s *Scope) Seal(ctx context.Context) (*RetainedOutput, error) {
 					"change_count":    len(out.changes),
 					// The full states and the change list ride in the payload so
 					// recovery (plan 05 section 4) rebuilds settle-able outputs:
-					// digests alone cannot restore a trace.WorkspaceState, and the
+					// digests alone cannot restore a WorkspaceState, and the
 					// overlap guard needs the paths.
 					"state": map[string]any{
 						"backend":  ws.Backend,
@@ -421,7 +421,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 		}
 		da, canDelta := parentSb.(sandbox.DeltaApplier)
 		if !canDelta {
-			return fmt.Errorf("settle %s (apply): parent sandbox backend %s does not implement sandbox.DeltaApplier: %w",
+			return fmt.Errorf("settle %s (apply): parent sandbox backend %s does not implement DeltaApplier: %w",
 				out.id, parentSb.Backend(), sandbox.ErrUnsupported)
 		}
 		if err := da.ApplyDelta(ctx, out.workspace); err != nil {

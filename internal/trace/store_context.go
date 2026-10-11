@@ -1,6 +1,8 @@
 package trace
 
-// Retained-context management for the SQLite trace store: group-context\n// resolution, persistence, and the context ids and digests Python's store\n// allocates the same way.
+// Retained-context management for the SQLite trace store: group-context
+// resolution, persistence, and the context ids and digests the reference
+// store allocates the same way.
 
 import (
 	"context"

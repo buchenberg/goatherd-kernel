@@ -263,7 +263,7 @@ func (s *Scope) forkWithBaseline(childOwnerID string, snapshot any, baseline tra
 		}
 		// The full baseline state rides in the payload so recovery can
 		// rebuild a child that can still propose merges and seal outputs:
-		// the digest alone cannot restore a trace.WorkspaceState.
+		// the digest alone cannot restore a WorkspaceState.
 		forkPayload["baseline"] = map[string]any{
 			"backend":  baseline.Backend,
 			"revision": baseline.Revision,

@@ -17,7 +17,7 @@ const (
 )
 
 // CaptureWorkspace records the scope's current workspace state as a reusable
-// trace.WorkspaceState.
+// WorkspaceState.
 //
 // Unlike CreateCheckpoint, this has no lifecycle: it consumes nothing, records
 // no checkpoint, and the returned state stays valid indefinitely. This is what
@@ -51,10 +51,10 @@ func (s *Scope) CaptureWorkspace(ctx context.Context) (trace.WorkspaceState, err
 
 // ApplyWorkspace resets the scope's workspace to a previously captured state.
 //
-// The state is not consumed — the same trace.WorkspaceState can be applied repeatedly
+// The state is not consumed — the same WorkspaceState can be applied repeatedly
 // by backends whose workspace state is reusable (the git backend). A backend
 // that provisions fresh resources on Apply may make it single-use; see
-// sandbox.Sandbox.Apply.
+// Sandbox.Apply.
 //
 // Records a "workspace.applied" capture in the scope's trace (advisory).
 func (s *Scope) ApplyWorkspace(ctx context.Context, ws trace.WorkspaceState) error {

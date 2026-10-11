@@ -314,7 +314,7 @@ handles     scope  <-  supervision
 
 | Package | Contents |
 |---|---|
-| `shepherd` (root) | the alias files that re-export the components — the public API is the union of the rows below |
+| `shepherd` (root) | the alias files that re-export the components — the public API is the union of the component rows below, not the test-support or nested-module rows |
 | `internal/trace` | the record model, canonical JSON, the SQLite trace store, the effect bus, execution/history/relation projections, the checkpoint-blob and materialization-ledger plumbing |
 | `internal/sandbox` | the `Sandbox` interface, the git backends (in-place, worktree), the backend registry |
 | `internal/substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |

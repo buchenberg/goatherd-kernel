@@ -21,7 +21,7 @@ import (
 
 // RecoverOptions configures scope recovery.
 type RecoverOptions struct {
-	// sandbox.Sandbox re-adoption. Recovery calls it for every recovered root scope
+	// Sandbox re-adoption. Recovery calls it for every recovered root scope
 	// and every isolated child, with the backend the trace recorded (empty
 	// for roots, which have no record). Return (nil, nil) to recover the
 	// scope without a sandbox — deliberate non-adoption, not an error: the

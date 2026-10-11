@@ -1,6 +1,8 @@
 package trace
 
-// SQLite trace store: the store type, construction, options, and the\n// error taxonomy. The append, read, frontier, witness, context, and record\n// seams live in their own files in this package.
+// SQLite trace store: the store type, construction, options, and the
+// error taxonomy. The append, read, frontier, witness, context, and record
+// seams live in their own files in this package.
 
 import (
 	"context"

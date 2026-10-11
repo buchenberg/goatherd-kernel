@@ -88,10 +88,12 @@ func TestSupervisor_ReviewMerge(t *testing.T) {
 	if child.State() != ScopeDiscarded {
 		t.Errorf("child state = %s, want discarded", child.State())
 	}
+	// A denial is causal-only: a shared-sandbox child's write is already in
+	// the parent tree, so Discard removes nothing from disk — the caller's
+	// checkpoint restore is the physical rollback. Assert the persistence
+	// explicitly rather than logging a dead "file gone" branch.
 	if !fileExists(t, repo, "elsewhere.txt") {
-		// The shared child's write is in the parent tree; the caller's
-		// checkpoint restore removes it. Here we only assert the causal side.
-		t.Log("note: shared child's write was already in the parent tree; rollback is the caller's restore")
+		t.Error("elsewhere.txt vanished: a denied shared-sandbox merge must leave the parent tree untouched")
 	}
 
 	// An in-prefix proposal produces no intervention (approval).

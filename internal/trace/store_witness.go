@@ -1,6 +1,8 @@
 package trace
 
-// Witness machinery of the SQLite trace store: witness plans, the\n// witness-support closure, chain validation to the root, and witness\n// record insertion.
+// Witness machinery of the SQLite trace store: witness plans, the
+// witness-support closure, chain validation to the root, and witness
+// record insertion.
 
 import (
 	"context"

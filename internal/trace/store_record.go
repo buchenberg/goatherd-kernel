@@ -1,6 +1,8 @@
 package trace
 
-// Record-level persistence for the SQLite trace store: fact-row\n// insertion and idempotency, owner ordinals and commit sequences, and\n// the transaction-internal record reads the append path uses.
+// Record-level persistence for the SQLite trace store: fact-row
+// insertion and idempotency, owner ordinals and commit sequences, and
+// the transaction-internal record reads the append path uses.
 
 import (
 	"context"

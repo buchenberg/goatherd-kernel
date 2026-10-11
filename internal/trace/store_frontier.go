@@ -1,6 +1,7 @@
 package trace
 
-// Frontier and cut machinery of the SQLite trace store: publish, resolve,\n// and the durable owner cutoff the runtime handles poll.
+// Frontier and cut machinery of the SQLite trace store: publish,
+// resolve, and the durable owner cutoff the runtime handles poll.
 
 import (
 	"context"

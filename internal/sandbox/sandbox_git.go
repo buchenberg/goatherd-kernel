@@ -316,12 +316,18 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 	if _, err := repo.run(ctx, "worktree", "remove", "--force", g.worktreePath); err != nil {
 		// "git worktree remove" fails harmlessly when the worktree was
 		// never created or is already gone, and os.RemoveAll is a no-op
-		// then — an idempotent Destroy must not warn about it. Only log
-		// when the fallback actually removed something that existed.
-		if _, statErr := os.Lstat(g.worktreePath); statErr == nil {
+		// then — an idempotent Destroy must not warn about it. Only skip
+		// on the path-not-exist condition; any other stat failure (say
+		// EACCES on the parent) must fall through to the removal attempt
+		// rather than silently reporting success over a leftover tree.
+		if _, statErr := os.Lstat(g.worktreePath); !os.IsNotExist(statErr) {
 			if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
 				return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
 					g.worktreePath, rmErr, err)
+			}
+			if statErr != nil {
+				return fmt.Errorf("git sandbox: inspect worktree %s: %w (git worktree remove failed: %v)",
+					g.worktreePath, statErr, err)
 			}
 			slog.Warn("git sandbox: git worktree remove failed, removed with os.RemoveAll fallback",
 				"worktree", g.worktreePath, "err", err)

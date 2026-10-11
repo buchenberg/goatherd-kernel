@@ -1,6 +1,9 @@
 package trace
 
-// The read path of the SQLite trace store: the public ReadFact/\n// ReadOwnerPrefix/ReadCausalClosure API, slice building and visibility\n// filtering, the by-schema scan recovery consumes, and the read-side\n// authorization guards.
+// The read path of the SQLite trace store: the public
+// ReadFact/ReadOwnerPrefix/ReadCausalClosure API, slice building and
+// visibility filtering, the by-schema scan recovery consumes, and the
+// read-side authorization guards.
 
 import (
 	"context"

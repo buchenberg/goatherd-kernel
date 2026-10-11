@@ -1,6 +1,7 @@
 package trace
 
-// Schema creation for the SQLite trace store: the tables, indices, and\n// migrations the store's methods assume.
+// Schema creation for the SQLite trace store: the tables, indices, and
+// migrations the store methods assume.
 
 import (
 	_ "modernc.org/sqlite"
