@@ -1,9 +1,20 @@
 # Plan 06 — Settlement over dirty baselines & recoverable sandbox identity
 
-Status: **proposed**. Two upstream gaps surfaced by yaah's shepherd-kernel
-adoption (reviewed end-to-end after the adoption completed; evidence cited
-per finding). Both are kernel-owned: yaah worked around or fenced them, but
-the fixes belong here.
+Status: **shipped — v0.14.0, yaah re-pinned (PR #276)**. Two upstream gaps
+surfaced by yaah's shepherd-kernel adoption (reviewed end-to-end after
+the adoption completed; evidence cited per finding). Both were
+kernel-owned: yaah worked around or fenced them, and the fixes landed
+here. Phases A–C shipped in kernel PRs #53–#55 (v0.14.0); phase D — the
+re-pin, the resolver's path parameter, the retirement of yaah's
+worktree-record registry, and the restored dirty-fork regression test —
+in yaah PR #276. The review process added two designs this plan had not
+anticipated: sealed trees are pinned against garbage collection with
+refs under `refs/shepherd/states/` (the trace store is invisible to
+git's reachability traversal), and a same-tree different-HEAD parent is
+deliberately a *moved* workspace — select's destructive reset would
+discard the commit, so it routes to apply. Residual follow-ups recorded
+below in the phases and non-goals: the pin release lifecycle, the
+containerd capture identity, and the legacy-stash exposure.
 
 ---
 
