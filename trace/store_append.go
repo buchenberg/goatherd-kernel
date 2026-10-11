@@ -68,13 +68,21 @@ func (s *SQLiteTraceStore) publishAppendEvents(batch AppendBatch, receipt Append
 			if factIdx >= len(receipt.FactIDs) {
 				return
 			}
+			// The kind label is published as the persisted record
+			// resolves it — an empty draft label defaults to the schema
+			// reference (prepareAppend) — so SSE consumers see the same
+			// label /api/records serves, not the pre-normalized draft.
+			kindLabel := draft.KindLabel
+			if kindLabel == "" {
+				kindLabel = draft.SchemaRef
+			}
 			event := EffectEvent{
 				RecordID:      receipt.FactIDs[factIdx],
 				IntentID:      batch.AppendIntentID,
 				TraceOwnerID:  group.TraceOwnerID,
 				Mode:          draft.Mode,
 				SchemaRef:     draft.SchemaRef,
-				KindLabel:     draft.KindLabel,
+				KindLabel:     kindLabel,
 				Payload:       draft.Payload,
 				CausalParents: append(group.CausalParents, draft.CausedByFactIDs...),
 				Timestamp:     now,

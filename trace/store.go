@@ -9,7 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
+	"net/url"
 	"sync"
 
 	_ "modernc.org/sqlite"
@@ -121,6 +121,47 @@ func NewSQLiteTraceStore(path string) (*SQLiteTraceStore, error) {
 	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
+	}
+	return s, nil
+}
+
+// OpenSQLiteTraceStoreReadOnly opens an existing trace database for reading
+// only. It is the viewer's opener: unlike NewSQLiteTraceStore it never
+// writes — no journal-mode pragma runs and no schema is created — so a
+// missing, empty, or non-trace file fails loudly instead of materializing
+// a valid-looking empty trace. The database must already hold the full
+// trace schema, which is validated without DDL.
+//
+// The path names a file, never ":memory:". Paths containing SQLite URI
+// metacharacters ('?', '#') are percent-encoded, as the URI filename form
+// requires.
+func OpenSQLiteTraceStoreReadOnly(path string) (*SQLiteTraceStore, error) {
+	if path == "" || path == ":memory:" {
+		return nil, fmt.Errorf("read-only open requires an existing database file, not %q", path)
+	}
+	dsn := "file:" + url.PathEscape(path) + "?mode=ro"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite read-only: %w", err)
+	}
+	db.SetMaxOpenConns(1) // SQLite is single-writer
+
+	// No journal-mode pragma: switching the journal mode writes to the
+	// database file, which a read-only connection must not do. The busy
+	// timeout and foreign-keys pragmas are connection-local and safe.
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
+	s := &SQLiteTraceStore{path: path, db: db}
+	if err := s.validateExistingSchema(); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return s, nil
 }

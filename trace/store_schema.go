@@ -4,8 +4,62 @@ package trace
 // migrations the store methods assume.
 
 import (
+	"fmt"
+	"strings"
+
 	_ "modernc.org/sqlite"
 )
+
+// expectedTables lists every table createSchema builds. A read-only open
+// verifies all of them exist before handing out a store: a viewer pointed
+// at a wrong file must fail loudly, not serve an empty trace of a session
+// that never existed.
+var expectedTables = []string{
+	"meta",
+	"append_intents",
+	"materialization_intents",
+	"contexts",
+	"owner_ordinals",
+	"records",
+	"record_edges",
+	"path_entries",
+	"checkpoint_snapshots",
+	"frontiers",
+}
+
+// validateExistingSchema checks sqlite_master for the expected tables
+// without running any DDL. It is the read-only counterpart of createSchema:
+// the schema is verified, never created.
+func (s *SQLiteTraceStore) validateExistingSchema() error {
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+	if err != nil {
+		return fmt.Errorf("read schema: %w", err)
+	}
+	defer rows.Close()
+
+	have := make(map[string]bool, len(expectedTables))
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan schema table name: %w", err)
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read schema: %w", err)
+	}
+
+	var missing []string
+	for _, table := range expectedTables {
+		if !have[table] {
+			missing = append(missing, table)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("not a trace database: missing tables: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
 
 func (s *SQLiteTraceStore) createSchema() error {
 	_, err := s.db.Exec(`
