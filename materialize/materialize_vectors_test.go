@@ -119,7 +119,7 @@ type materializeReplayVector struct {
 
 func loadMaterializeVectors(t *testing.T) materializeVectorDoc {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/materialize_vectors_v0.json")
+	data, err := os.ReadFile("../testdata/materialize_vectors_v0.json")
 	if err != nil {
 		t.Fatalf("read materialize vectors: %v", err)
 	}
