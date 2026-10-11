@@ -2,11 +2,13 @@ package shepherd
 
 import (
 	"context"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // rmFile removes a file from the test repo, failing the test on error.
@@ -34,8 +36,8 @@ func TestWorkspace_CaptureCleanRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CaptureWorkspace: %v", err)
 	}
-	if got := stashOf(&Checkpoint{Workspace: ws}); got != "" {
-		t.Errorf("clean repo should have empty stash SHA, got %s", got)
+	if got, want := treeOf(&Checkpoint{Workspace: ws}), gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got != want {
+		t.Errorf("clean capture's tree = %s, want HEAD's tree %s (a clean tree degenerates to it)", got, want)
 	}
 	if ws.Revision == "" {
 		t.Error("clean repo should have a HEAD revision")
@@ -56,8 +58,10 @@ func TestWorkspace_CaptureDirtyRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CaptureWorkspace: %v", err)
 	}
-	if got := stashOf(&Checkpoint{Workspace: ws}); got == "" {
-		t.Error("dirty repo should produce a non-empty stash SHA")
+	if got := treeOf(&Checkpoint{Workspace: ws}); got == "" {
+		t.Error("dirty repo should record a tree_sha")
+	} else if want := gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got == want {
+		t.Errorf("dirty capture's tree = HEAD's tree %s; the uncommitted content is missing from it", got)
 	}
 }
 

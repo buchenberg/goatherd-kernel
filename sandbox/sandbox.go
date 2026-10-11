@@ -122,6 +122,20 @@ type Sandbox interface {
 	Destroy(ctx context.Context) error
 
 	// Capture records the current workspace state. Non-mutating.
+	//
+	// Contract: a capture of unchanged content at an unchanged timeline
+	// position must be digest-stable — two captures of an identical
+	// workspace must produce equal WorkspaceState digests, so a caller
+	// can compare digests as content equality (settlement's select
+	// precondition does). A workspace that only advanced its timeline —
+	// a commit whose tree equals the prior content — is a *moved*
+	// workspace by design: its capture digests differently, and callers
+	// like settlement's select verb deliberately treat it as moved,
+	// because their reset semantics would discard the commit; the
+	// apply verb merges instead. The git backend satisfies this with
+	// content-derived identities; the containerd backend does not yet —
+	// its captures carry a per-capture sequence key — and is a recorded
+	// follow-up gap, not a silent violation.
 	Capture(ctx context.Context) (trace.WorkspaceState, error)
 
 	// Apply resets the workspace to a previously captured state. The git
@@ -151,10 +165,10 @@ type Sandbox interface {
 // case — it would roll the workspace back to the state's HEAD. Settlement's
 // apply verb (plan 04 §2) needs the merge instead.
 //
-// A delta state records its own base (the git backend's stash commit carries
-// its parent), so one argument is enough: the backend merges the delta onto
-// whatever the workspace holds now. A conflict fails the call and must
-// leave the workspace untouched.
+// A delta state records its own base (the git backend carries the baseline
+// tree it was measured against), so one argument is enough: the backend
+// merges the delta onto whatever the workspace holds now. A conflict fails
+// the call and must leave the workspace untouched.
 //
 // Backends that cannot merge a delta return ErrUnsupported from the
 // assertion's absence — callers detect the capability with a type
@@ -166,6 +180,24 @@ type DeltaApplier interface {
 	// workspace. A delta with no changes (a clean capture) is a no-op.
 	// A conflicting delta returns an error and consumes nothing.
 	ApplyDelta(ctx context.Context, delta trace.WorkspaceState) error
+}
+
+// DeltaBaseAnnotator is an optional Sandbox capability: the backend can
+// record, on a freshly captured state, the merge base that state's changes
+// are measured against, and pin the objects that base depends on against
+// backend-side garbage collection. Settlement's Seal uses it at seal time,
+// so a later ApplyDelta never needs to resolve a legacy identity (e.g. a
+// minted stash commit) that garbage collection may already have reclaimed.
+//
+// Backends whose deltas need no base simply do not implement it; callers
+// detect it with a type assertion, the same pattern as DeltaApplier, so
+// adding it is a backend decision, not a kernel-wide breaking change.
+type DeltaBaseAnnotator interface {
+	// AnnotateDeltaBase records the baseline's merge-base identity into
+	// delta. baseline is the fork baseline the delta's changes are
+	// measured against; delta is a fresh capture the caller is about to
+	// seal. The key names are the backend's, opaque to the caller.
+	AnnotateDeltaBase(ctx context.Context, delta *trace.WorkspaceState, baseline trace.WorkspaceState) error
 }
 
 // --- Sandbox backend registry ---

@@ -19,10 +19,11 @@ func gitScope(store *trace.SQLiteTraceStore, owner, repo string) *Scope {
 	return NewScope(store, owner).WithSandbox(git.NewLocalGitSandbox(repo), false)
 }
 
-// stashOf extracts the stash SHA from a checkpoint's backend-neutral workspace
-// state.
-func stashOf(cp *Checkpoint) string {
-	s, _ := cp.Workspace.Data["stash_sha"].(string)
+// treeOf extracts the tree SHA from a checkpoint's workspace state: the
+// content identity plan 06 records (the legacy stash_sha key is gone from
+// new captures).
+func treeOf(cp *Checkpoint) string {
+	s, _ := cp.Workspace.Data["tree_sha"].(string)
 	return s
 }
 
@@ -40,8 +41,8 @@ func TestCheckpoint_CreateCleanRepo(t *testing.T) {
 	if cp.State != CheckpointValid {
 		t.Errorf("expected valid, got %s", cp.State)
 	}
-	if got := stashOf(cp); got != "" {
-		t.Errorf("clean repo should have empty stash SHA, got %s", got)
+	if got, want := treeOf(cp), gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got != want {
+		t.Errorf("clean capture's tree = %s, want HEAD's tree %s (a clean tree degenerates to it)", got, want)
 	}
 	if cp.Workspace.Revision == "" {
 		t.Error("clean repo should have a HEAD revision")
@@ -66,8 +67,10 @@ func TestCheckpoint_CreateDirtyRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
-	if stashOf(cp) == "" {
-		t.Error("dirty repo should produce a non-empty stash SHA")
+	if treeOf(cp) == "" {
+		t.Error("dirty repo should record a tree_sha")
+	} else if got, want := treeOf(cp), gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got == want {
+		t.Errorf("dirty capture's tree = HEAD's tree %s; the uncommitted content is missing from it", got)
 	}
 }
 
@@ -83,8 +86,10 @@ func TestCheckpoint_CreateWithUntracked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
-	if stashOf(cp) == "" {
-		t.Error("repo with untracked file should produce a non-empty stash SHA")
+	if treeOf(cp) == "" {
+		t.Error("repo with untracked file should record a tree_sha")
+	} else if got, want := treeOf(cp), gittest.MustGit(t, repo, "rev-parse", "HEAD^{tree}"); got == want {
+		t.Errorf("capture's tree = HEAD's tree %s; the untracked file is missing from it", got)
 	}
 }
 
@@ -452,8 +457,8 @@ func TestCheckpoint_DoesNotLeaveIndexStaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCheckpoint: %v", err)
 	}
-	if stashOf(cp) == "" {
-		t.Fatal("expected a stash for a dirty tree")
+	if treeOf(cp) == "" {
+		t.Fatal("expected a tree for a dirty capture")
 	}
 
 	// Nothing may remain staged after the checkpoint.

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buchenberg/shepherd-kernel-go/internal/gittest"
+	"github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 )
 
 // TestSeal_FreezesChanges covers T3.5's Seal: registered output, classified
@@ -365,4 +367,128 @@ func readRepoFile(t *testing.T, repo, name string) string {
 		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(data)
+}
+
+// TestSeal_RecordsDeltaBase pins plan 06's seal-time annotation: the sealed
+// record's state carries base_tree_sha — the fork baseline's tree, resolved
+// while its objects are certainly reachable — so a recovered output can
+// ApplyDelta without resolving a legacy identity that garbage collection may
+// have reclaimed.
+func TestSeal_RecordsDeltaBase(t *testing.T) {
+	store := newMemStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:sealbase-parent", git.NewLocalGitSandbox(repo))
+
+	// Dirty the fork baseline so its tree differs from HEAD's tree — the
+	// annotation must carry the dirty state's identity, not HEAD's.
+	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatalf("write dirty: %v", err)
+	}
+
+	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:sealbase-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	if _, err := mgr.Seal(ctx, child.ID()); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The baseline tree as the parent's sandbox captures it.
+	parentSb := git.NewLocalGitSandbox(repo)
+	baseline, err := parentSb.Capture(ctx)
+	if err != nil {
+		t.Fatalf("capture parent baseline: %v", err)
+	}
+
+	sealed := findRecords(t, store, "set:sealbase-child", SchemaRunOutputSealed)
+	if len(sealed) != 1 {
+		t.Fatalf("sealed records: %d, want 1", len(sealed))
+	}
+	payload := sealed[0].Body.Payload
+	state, _ := payload["state"].(map[string]any)
+	if state == nil {
+		t.Fatalf("sealed payload has no state: %v", payload)
+	}
+	data, _ := state["data"].(map[string]any)
+	if data == nil {
+		t.Fatalf("sealed payload state has no data: %v", state)
+	}
+	base, _ := data["base_tree_sha"].(string)
+	if base == "" {
+		t.Fatal("sealed state carries no base_tree_sha; ApplyDelta at settle time would have no merge base")
+	}
+	if want, _ := baseline.Data["tree_sha"].(string); base != want {
+		t.Errorf("base_tree_sha = %s, want the fork baseline's tree %s", base, want)
+	}
+}
+
+// TestSettle_SameTreeMovedHeadRoutesToApply pins the timeline-move routing:
+// a parent whose content is unchanged but that committed since the fork
+// (here: it committed the baseline's own dirt) is a *moved* workspace —
+// select refuses, because its reset would discard the commit — and apply
+// merges, keeping the commit. This is deliberate: same-tree-different-HEAD
+// captures digest differently because the timeline position is part of
+// the state, and select's destructive path must never roll back a parent's
+// real commit.
+func TestSettle_SameTreeMovedHeadRoutesToApply(t *testing.T) {
+	store := newMemStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:sametree-parent", git.NewLocalGitSandbox(repo))
+
+	// A dirty fork baseline: uncommitted content on a tracked file.
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+
+	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:sametree-child", repo, "wt")
+	// A git worktree checks out HEAD, so the baseline's uncommitted content
+	// must be carried into the child the way a provisioning layer would;
+	// otherwise the child's delta would read the baseline dirt as its own
+	// deletion.
+	if err := os.WriteFile(filepath.Join(wtPath, "base.txt"), []byte("dirty"), 0o644); err != nil {
+		t.Fatalf("write inherited baseline content: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("winner"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The parent commits the baseline's dirt: content unchanged, timeline
+	// moved.
+	mustGit(t, repo, "add", "-A")
+	mustGit(t, repo, "commit", "-m", "parent commits the dirt")
+	movedHead := gittest.MustHead(t, repo)
+
+	err = mgr.Settle(ctx, out.ID(), SettleSelect)
+	if err == nil || !strings.Contains(err.Error(), "SettleApply") {
+		t.Fatalf("select over a moved timeline: %v, want a refusal pointing at SettleApply", err)
+	}
+	if out.State() != OutputUnconsumed {
+		t.Errorf("refused select consumed the output: %s", out.State())
+	}
+
+	if err := mgr.Settle(ctx, out.ID(), SettleApply); err != nil {
+		t.Fatalf("SettleApply over the moved parent: %v", err)
+	}
+	if got := readRepoFile(t, repo, "result.txt"); got != "winner" {
+		t.Errorf("result.txt = %q, want the child's content landed", got)
+	}
+	// The parent's commit survives the apply: the merge never rolls back
+	// the parent's timeline.
+	if got := gittest.ReadFile(t, repo, "base.txt"); got != "dirty" {
+		t.Errorf("base.txt = %q, want the committed content intact", got)
+	}
+	if head := gittest.MustHead(t, repo); head != movedHead {
+		t.Errorf("HEAD moved during apply: %s, want the parent's commit %s intact", head, movedHead)
+	}
+	if out.State() != OutputApplied {
+		t.Errorf("output state = %s, want applied", out.State())
+	}
 }
