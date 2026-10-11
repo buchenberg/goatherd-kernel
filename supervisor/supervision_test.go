@@ -1,31 +1,35 @@
-package shepherd
+package supervisor_test
 
 import (
 	"context"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"strings"
 	"testing"
 	"time"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	"github.com/buchenberg/shepherd-kernel-go/supervisor"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 func TestSupervisor_BasicRuleMatch(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, bus)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, bus)
 
 	matched := false
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name: "test_rule",
 		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e trace.EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			matched = true
-			return &Intervention{
-				Type:    InterventionInject,
+			return &supervisor.Intervention{
+				Type:    supervisor.InterventionInject,
 				ScopeID: "scope:" + e.TraceOwnerID,
 				Payload: "test intervention",
 				Time:    time.Now(),
@@ -33,8 +37,8 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 		},
 	})
 
-	supervisor.Start("test-supervisor")
-	defer supervisor.Close()
+	sup.Start("test-supervisor")
+	defer sup.Close()
 
 	// Publish a matching event
 	bus.Publish(trace.EffectEvent{
@@ -47,8 +51,8 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 
 	// Wait for intervention
 	select {
-	case iv := <-supervisor.Interventions():
-		if iv.Type != InterventionInject {
+	case iv := <-sup.Interventions():
+		if iv.Type != supervisor.InterventionInject {
 			t.Errorf("expected inject, got %s", iv.Type)
 		}
 		if iv.ScopeID != "scope:sub:worker" {
@@ -63,25 +67,25 @@ func TestSupervisor_BasicRuleMatch(t *testing.T) {
 }
 
 func TestSupervisor_NonMatchingRule(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, bus)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, bus)
 
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name: "bash_only",
 		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e trace.EffectEvent) *Intervention {
-			return &Intervention{Type: InterventionInject, ScopeID: "x"}
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionInject, ScopeID: "x"}
 		},
 	})
 
-	supervisor.Start("test-nonmatch")
-	defer supervisor.Close()
+	sup.Start("test-nonmatch")
+	defer sup.Close()
 
 	// Publish a non-matching event
 	bus.Publish(trace.EffectEvent{
@@ -91,7 +95,7 @@ func TestSupervisor_NonMatchingRule(t *testing.T) {
 
 	// Should NOT receive intervention
 	select {
-	case <-supervisor.Interventions():
+	case <-sup.Interventions():
 		t.Error("should not receive intervention for non-matching event")
 	case <-time.After(100 * time.Millisecond):
 		// expected
@@ -99,42 +103,42 @@ func TestSupervisor_NonMatchingRule(t *testing.T) {
 }
 
 func TestSupervisor_FirstRuleWins(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, bus)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, bus)
 
 	var firstCalled bool
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "first",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			firstCalled = true
-			return &Intervention{Type: InterventionInject, ScopeID: "x"}
+			return &supervisor.Intervention{Type: supervisor.InterventionInject, ScopeID: "x"}
 		},
 	})
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "second",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
-			return &Intervention{Type: InterventionHalt, ScopeID: "x"}
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionHalt, ScopeID: "x"}
 		},
 	})
 
-	supervisor.Start("first-wins")
-	defer supervisor.Close()
+	sup.Start("first-wins")
+	defer sup.Close()
 
 	bus.Publish(trace.EffectEvent{KindLabel: "test"})
 
 	select {
-	case iv := <-supervisor.Interventions():
+	case iv := <-sup.Interventions():
 		if !firstCalled {
 			t.Error("first rule Action should have been called")
 		}
-		if iv.Type != InterventionInject {
-			t.Errorf("expected InterventionInject from first rule, got %s", iv.Type)
+		if iv.Type != supervisor.InterventionInject {
+			t.Errorf("expected supervisor.InterventionInject from first rule, got %s", iv.Type)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for intervention")
@@ -142,29 +146,29 @@ func TestSupervisor_FirstRuleWins(t *testing.T) {
 }
 
 func TestSupervisor_ObserveOnlyRule(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, bus)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, bus)
 
 	// Rule that matches but returns nil (observe-only)
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "observer",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			return nil // observe only
 		},
 	})
 
-	supervisor.Start("observer-test")
-	defer supervisor.Close()
+	sup.Start("observer-test")
+	defer sup.Close()
 
 	bus.Publish(trace.EffectEvent{KindLabel: "test"})
 
 	select {
-	case <-supervisor.Interventions():
+	case <-sup.Interventions():
 		t.Error("observe-only rule should not produce intervention")
 	case <-time.After(100 * time.Millisecond):
 		// expected
@@ -172,15 +176,15 @@ func TestSupervisor_ObserveOnlyRule(t *testing.T) {
 }
 
 func TestSupervisor_Inject(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := shepherd.NewScopeManager(store)
 	mgr.Create("sub:inject-target", nil)
 
-	supervisor := NewSupervisor(mgr, bus)
-	err := supervisor.Inject("scope:sub:inject-target", "try a different approach")
+	sup := supervisor.NewSupervisor(mgr, bus)
+	err := sup.Inject("scope:sub:inject-target", "try a different approach")
 	if err != nil {
 		t.Fatalf("inject failed: %v", err)
 	}
@@ -194,7 +198,7 @@ func TestSupervisor_Inject(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == SchemaSupervisorInject {
+		if rec.GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
 			found = true
 			break
 		}
@@ -205,21 +209,21 @@ func TestSupervisor_Inject(t *testing.T) {
 }
 
 func TestSupervisor_Halt(t *testing.T) {
-	store := newMemStore(t)
+	store := rttest.NewMemStore(t)
 	bus := trace.NewEffectBus(64)
 	defer bus.Close()
 
-	mgr := NewScopeManager(store)
+	mgr := shepherd.NewScopeManager(store)
 	target, _ := mgr.Create("sub:halt-target", nil)
 
-	supervisor := NewSupervisor(mgr, bus)
-	err := supervisor.Halt("scope:sub:halt-target")
+	sup := supervisor.NewSupervisor(mgr, bus)
+	err := sup.Halt("scope:sub:halt-target")
 	if err != nil {
 		t.Fatalf("halt failed: %v", err)
 	}
 
 	// the target scope should be discarded
-	if target.State() != ScopeDiscarded {
+	if target.State() != shepherd.ScopeDiscarded {
 		t.Errorf("expected scope discarded after halt, got %s", target.State())
 	}
 
@@ -232,7 +236,7 @@ func TestSupervisor_Halt(t *testing.T) {
 	found := false
 	for _, id := range slice.FactIDs() {
 		rec := slice.FactsByID[id]
-		if rec.GetEnvelope().SchemaRef == SchemaSupervisorHalt {
+		if rec.GetEnvelope().SchemaRef == shepherd.SchemaSupervisorHalt {
 			found = true
 			break
 		}
@@ -243,16 +247,16 @@ func TestSupervisor_Halt(t *testing.T) {
 }
 
 func TestSupervisor_ScopeNotFound(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
-	err := supervisor.Inject("scope:nonexistent", "hello")
+	err := sup.Inject("scope:nonexistent", "hello")
 	if err == nil {
 		t.Error("inject to nonexistent scope should fail")
 	}
 
-	err = supervisor.Halt("scope:nonexistent")
+	err = sup.Halt("scope:nonexistent")
 	if err == nil {
 		t.Error("halt of nonexistent scope should fail")
 	}
@@ -261,7 +265,7 @@ func TestSupervisor_ScopeNotFound(t *testing.T) {
 // --- Built-in rule tests ---
 
 func TestDestructiveToolRule_BashRm(t *testing.T) {
-	rule := DestructiveToolRule()
+	rule := supervisor.DestructiveToolRule()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -278,13 +282,13 @@ func TestDestructiveToolRule_BashRm(t *testing.T) {
 	if iv == nil {
 		t.Fatal("destructive rule should produce intervention")
 	}
-	if iv.Type != InterventionInject {
+	if iv.Type != supervisor.InterventionInject {
 		t.Errorf("expected inject, got %s", iv.Type)
 	}
 }
 
 func TestDestructiveToolRule_BashSafe(t *testing.T) {
-	rule := DestructiveToolRule()
+	rule := supervisor.DestructiveToolRule()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -299,7 +303,7 @@ func TestDestructiveToolRule_BashSafe(t *testing.T) {
 }
 
 func TestDestructiveToolRule_Write(t *testing.T) {
-	rule := DestructiveToolRule()
+	rule := supervisor.DestructiveToolRule()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -314,7 +318,7 @@ func TestDestructiveToolRule_Write(t *testing.T) {
 }
 
 func TestDestructiveToolRule_IgnoresCaptures(t *testing.T) {
-	rule := DestructiveToolRule()
+	rule := supervisor.DestructiveToolRule()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Capture,
@@ -328,7 +332,7 @@ func TestDestructiveToolRule_IgnoresCaptures(t *testing.T) {
 }
 
 func TestHighErrorRateRule_Triggers(t *testing.T) {
-	rule := HighErrorRateRule(0.5, 6) // 50% threshold, window of 6
+	rule := supervisor.HighErrorRateRule(0.5, 6) // 50% threshold, window of 6
 
 	// First: add 2 errors — not enough data yet (need windows/2 = 3)
 	for i := 0; i < 2; i++ {
@@ -372,7 +376,7 @@ func TestHighErrorRateRule_Triggers(t *testing.T) {
 }
 
 func TestHighErrorRateRule_IgnoresDeclarations(t *testing.T) {
-	rule := HighErrorRateRule(0.5, 6)
+	rule := supervisor.HighErrorRateRule(0.5, 6)
 
 	event := trace.EffectEvent{
 		TraceOwnerID: "sub:test",
@@ -386,7 +390,7 @@ func TestHighErrorRateRule_IgnoresDeclarations(t *testing.T) {
 }
 
 func TestStuckDetectionRule_Triggers(t *testing.T) {
-	rule := StuckDetectionRule(3) // 3 repeats
+	rule := supervisor.StuckDetectionRule(3) // 3 repeats
 
 	// Same call 3 times
 	for i := 0; i < 3; i++ {
@@ -410,7 +414,7 @@ func TestStuckDetectionRule_Triggers(t *testing.T) {
 }
 
 func TestStuckDetectionRule_ResetsOnDifferentCall(t *testing.T) {
-	rule := StuckDetectionRule(3)
+	rule := supervisor.StuckDetectionRule(3)
 
 	events := []trace.EffectEvent{
 		{TraceOwnerID: "sub:reset", Mode: trace.Declaration, KindLabel: "bash", Payload: map[string]any{"cmd": "ls"}},
@@ -430,7 +434,7 @@ func TestStuckDetectionRule_ResetsOnDifferentCall(t *testing.T) {
 }
 
 func TestStuckDetectionRule_IgnoresCaptures(t *testing.T) {
-	rule := StuckDetectionRule(3)
+	rule := supervisor.StuckDetectionRule(3)
 
 	event := trace.EffectEvent{
 		TraceOwnerID: "sub:test",
@@ -446,23 +450,23 @@ func TestStuckDetectionRule_IgnoresCaptures(t *testing.T) {
 // --- Phase 2: CheckCall tests ---
 
 func TestSupervisor_CheckCall_Approved(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
 	// Non-matching rule
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name: "bash_only",
 		Match: func(e trace.EffectEvent) bool {
 			return e.KindLabel == "bash"
 		},
-		Action: func(e trace.EffectEvent) *Intervention {
-			return &Intervention{Type: InterventionDeny, ScopeID: "x"}
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionDeny, ScopeID: "x"}
 		},
 	})
 
 	// Event that doesn't match
-	iv := supervisor.CheckCall(trace.EffectEvent{
+	iv := sup.CheckCall(trace.EffectEvent{
 		Mode:      trace.Declaration,
 		KindLabel: "read_file",
 	})
@@ -472,13 +476,13 @@ func TestSupervisor_CheckCall_Approved(t *testing.T) {
 }
 
 func TestSupervisor_CheckCall_Deny(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
-	supervisor.AddRule(DestructiveToolGuard())
+	sup.AddRule(supervisor.DestructiveToolGuard())
 
-	iv := supervisor.CheckCall(trace.EffectEvent{
+	iv := sup.CheckCall(trace.EffectEvent{
 		Mode:      trace.Declaration,
 		KindLabel: "bash",
 		SchemaRef: "yaah.tool.bash.v1",
@@ -487,61 +491,61 @@ func TestSupervisor_CheckCall_Deny(t *testing.T) {
 	if iv == nil {
 		t.Fatal("expected intervention, got nil")
 	}
-	if iv.Type != InterventionDeny {
+	if iv.Type != supervisor.InterventionDeny {
 		t.Errorf("expected deny, got %s", iv.Type)
 	}
 }
 
 func TestSupervisor_CheckCall_FirstRuleWins(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "first",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
-			return &Intervention{Type: InterventionInject, ScopeID: "x"}
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionInject, ScopeID: "x"}
 		},
 	})
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "second",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
-			return &Intervention{Type: InterventionHalt, ScopeID: "x"}
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
+			return &supervisor.Intervention{Type: supervisor.InterventionHalt, ScopeID: "x"}
 		},
 	})
 
-	iv := supervisor.CheckCall(trace.EffectEvent{Mode: trace.Declaration, KindLabel: "test"})
+	iv := sup.CheckCall(trace.EffectEvent{Mode: trace.Declaration, KindLabel: "test"})
 	if iv == nil {
 		t.Fatal("expected intervention")
 	}
-	if iv.Type != InterventionInject {
+	if iv.Type != supervisor.InterventionInject {
 		t.Errorf("expected inject from first rule, got %s", iv.Type)
 	}
 }
 
 func TestSupervisor_CheckCall_ObserveOnly(t *testing.T) {
-	store := newMemStore(t)
-	mgr := NewScopeManager(store)
-	supervisor := NewSupervisor(mgr, nil)
+	store := rttest.NewMemStore(t)
+	mgr := shepherd.NewScopeManager(store)
+	sup := supervisor.NewSupervisor(mgr, nil)
 
-	supervisor.AddRule(SupervisionRule{
+	sup.AddRule(supervisor.SupervisionRule{
 		Name:  "observer",
 		Match: func(e trace.EffectEvent) bool { return true },
-		Action: func(e trace.EffectEvent) *Intervention {
+		Action: func(e trace.EffectEvent) *supervisor.Intervention {
 			return nil // observe only
 		},
 	})
 
-	iv := supervisor.CheckCall(trace.EffectEvent{Mode: trace.Declaration})
+	iv := sup.CheckCall(trace.EffectEvent{Mode: trace.Declaration})
 	if iv != nil {
 		t.Error("observe-only rule should return nil")
 	}
 }
 
 func TestDestructiveToolGuard_BashRm(t *testing.T) {
-	rule := DestructiveToolGuard()
+	rule := supervisor.DestructiveToolGuard()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -558,7 +562,7 @@ func TestDestructiveToolGuard_BashRm(t *testing.T) {
 	if iv == nil {
 		t.Fatal("guard should produce intervention")
 	}
-	if iv.Type != InterventionDeny {
+	if iv.Type != supervisor.InterventionDeny {
 		t.Errorf("expected deny, got %s", iv.Type)
 	}
 }
@@ -567,7 +571,7 @@ func TestDestructiveToolGuard_BashRm(t *testing.T) {
 // defaults to denying ANY bash command — even a benign `ls` — because shell
 // expansion makes a blacklist trivially bypassable for a security boundary.
 func TestDestructiveToolGuard_BashDefaultDeny(t *testing.T) {
-	rule := DestructiveToolGuard()
+	rule := supervisor.DestructiveToolGuard()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -585,7 +589,7 @@ func TestDestructiveToolGuard_BashDefaultDeny(t *testing.T) {
 // bypass attempt (rm${IFS}-rf) is still caught — it's bash, so default-deny
 // applies regardless of the specific command text.
 func TestDestructiveToolGuard_BashBypassAttempt(t *testing.T) {
-	rule := DestructiveToolGuard()
+	rule := supervisor.DestructiveToolGuard()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -600,7 +604,7 @@ func TestDestructiveToolGuard_BashBypassAttempt(t *testing.T) {
 }
 
 func TestDestructiveToolGuard_Write(t *testing.T) {
-	rule := DestructiveToolGuard()
+	rule := supervisor.DestructiveToolGuard()
 
 	event := trace.EffectEvent{
 		Mode:      trace.Declaration,
@@ -617,7 +621,7 @@ func TestDestructiveToolGuard_Write(t *testing.T) {
 	if iv == nil {
 		t.Fatal("guard should produce intervention for write")
 	}
-	if iv.Type != InterventionDeny {
+	if iv.Type != supervisor.InterventionDeny {
 		t.Errorf("expected deny, got %s", iv.Type)
 	}
 }
@@ -626,9 +630,9 @@ func TestDestructiveToolGuard_Write(t *testing.T) {
 // must report the window that was evaluated, not len(results) after the buffer
 // is reset to nil.
 func TestHighErrorRateRule_MessageReportsSampledWindow(t *testing.T) {
-	rule := HighErrorRateRule(0.5, 6)
+	rule := supervisor.HighErrorRateRule(0.5, 6)
 
-	var iv *Intervention
+	var iv *supervisor.Intervention
 	for i := 0; i < 3; i++ {
 		event := trace.EffectEvent{
 			TraceOwnerID: "sub:error-rate-message",

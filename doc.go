@@ -10,11 +10,9 @@
 // sealed outputs. [RecoverScopes] rebuilds the tree from the trace after a
 // restart — the trace is the registry.
 //
-// On top of the scope tree sit the task runtime ([StartTaskSync],
-// [StartTask], [Run], [TaskControl], [ChildHandle] with spawn/adopt/
-// abandon relations), the merge gate ([MergeProposal], [MergeReviewer]),
-// settlement ([RetainedOutput], [Scope.Seal], [ScopeManager.Settle]), and the [Supervisor]
-// rules engine that observes the effect bus and can inject, fork, or halt.
+// On top of the scope tree sit the merge gate ([MergeProposal],
+// [MergeReviewer]) and settlement ([RetainedOutput], [Scope.Seal],
+// [ScopeManager.Settle]).
 //
 // The kernel's components publish as their own packages, imported directly:
 //
@@ -29,6 +27,12 @@
 //     contract and the echo/KV/workspace substrates
 //   - github.com/buchenberg/shepherd-kernel-go/materialize — the
 //     materialize orchestrator
+//   - github.com/buchenberg/shepherd-kernel-go/task — the task runtime:
+//     StartTaskSync/StartTask, Run, TaskControl, ChildHandle with spawn/
+//     adopt/abandon relations
+//   - github.com/buchenberg/shepherd-kernel-go/supervisor — the rules
+//     engine that observes the effect bus and can inject, fork, discard,
+//     halt, or deny
 //
 // Compatibility: the record digests, canonical JSON, and the vector
 // fixtures are frozen ABI surface shared with the Python reference; the

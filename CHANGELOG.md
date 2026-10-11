@@ -7,6 +7,20 @@ contain breaking changes, which are called out below.
 ## [Unreleased]
 
 ### Changed (breaking)
+- **The task runtime and the supervision rules engine moved out of the root
+  package** into their own packages: `task`
+  (`StartTask`/`StartTaskSync`, `Run`, `TaskControl`, the task `Registry`,
+  `ChildHandle`) and `supervisor` (`Supervisor`, `SupervisionRule`,
+  `Intervention*`, the built-in rules). This is the §13 pre-freeze packaging
+  decision (b): the root `shepherd` package now owns the scope tree, the
+  merge gate, settlement, and recovery — the hub the extracted packages
+  depend on — while the two one-directional leaves stand beside
+  `sandbox/git` and `sandbox/containerd` as siblings. Migration:
+  `shepherd.NewSupervisor` → `supervisor.NewSupervisor`,
+  `shepherd.StartTaskSync` → `task.StartTaskSync`, and so on.
+  Recovery deliberately stays in the root package: it rebuilds the
+  `ScopeManager`'s internal state directly, and extracting it would mean
+  exporting internal mutators solely for one consumer.
 - **The git backend moved to the `sandbox/git` subpackage**
   (`github.com/buchenberg/shepherd-kernel-go/sandbox/git`):
   `NewLocalGitSandbox`, `NewWorktreeSandbox`, `GitSandbox`, and

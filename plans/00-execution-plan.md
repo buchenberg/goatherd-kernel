@@ -627,7 +627,14 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
       and the registry. The registry mechanics tests stayed in `sandbox`;
       the backend's OpenSandbox integration moved with it.)*
       (b) split the flat `shepherd` package (kernel / runtime / backends
-      share one namespace today). *(Still open.)* Both are hard to fix
+      share one namespace today).
+      *(Executed for the leaves: the task runtime moved to `task` and the
+      rules engine to `supervisor` — both one-directional dependencies on
+      the hub. The hub itself (scope tree, merge gate, settlement,
+      recovery) stays as the root package deliberately:
+      `ScopeManager` owns the merge/settlement verbs and recovery
+      rebuilds its internals, so a further split would need interface
+      seams and an API redesign, not a move.)* Both are hard to fix
       after an API freeze; both are cosmetic-but-real now. The `SandboxFactory`/
       `OpenSandbox` registry (the construction seam) landed in v0.10.0
       (PR #31 at `0c7c416`, verified from a clean module) so

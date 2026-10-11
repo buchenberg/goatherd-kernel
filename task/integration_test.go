@@ -1,4 +1,4 @@
-package shepherd
+package task_test
 
 // Handles integration test (plan 02 §6): a task tree with spawn, adopt and
 // abandon, projected from the run frontier, plus the restart law — reopen
@@ -7,6 +7,8 @@ package shepherd
 import (
 	"context"
 	"encoding/json"
+	"github.com/buchenberg/shepherd-kernel-go/internal/rttest"
+	"github.com/buchenberg/shepherd-kernel-go/task"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"path/filepath"
 	"testing"
@@ -56,11 +58,11 @@ func TestHandlesIntegrationTree(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 
-	reg := NewRegistry()
-	reg.Register("LeafTask", func(control *TaskControl) (map[string]any, error) {
+	reg := task.NewRegistry()
+	reg.Register("LeafTask", func(control *task.TaskControl) (map[string]any, error) {
 		return map[string]any{"leaf": true}, nil
 	})
-	reg.Register("ParentTask", func(control *TaskControl) (map[string]any, error) {
+	reg.Register("ParentTask", func(control *task.TaskControl) (map[string]any, error) {
 		if _, err := control.Publish(context.Background(), "phase", map[string]any{"at": "start"}); err != nil {
 			return nil, err
 		}
@@ -80,7 +82,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 		}
 
 		// Adopt an execution created outside this tree.
-		external, err := StartTaskSync(context.Background(), store, reg, "LeafTask", "integ:external", map[string]any{"x": json.Number("3")})
+		external, err := task.StartTaskSync(context.Background(), store, reg, "LeafTask", "integ:external", map[string]any{"x": json.Number("3")})
 		if err != nil {
 			return nil, err
 		}
@@ -93,9 +95,9 @@ func TestHandlesIntegrationTree(t *testing.T) {
 		return map[string]any{"children": json.Number("2")}, nil
 	})
 
-	run, err := StartTaskSync(context.Background(), store, reg, "ParentTask", "integ:parent", nil)
+	run, err := task.StartTaskSync(context.Background(), store, reg, "ParentTask", "integ:parent", nil)
 	if err != nil {
-		t.Fatalf("StartTaskSync: %v", err)
+		t.Fatalf("task.StartTaskSync: %v", err)
 	}
 
 	exec, err := run.Wait(context.Background())
@@ -110,7 +112,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cutoff: %v", err)
 	}
-	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, reader, cutoff)
+	history, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), store, rttest.Reader, cutoff)
 	if err != nil {
 		t.Fatalf("trace.ProjectEffectiveHistoryFromStore: %v", err)
 	}
@@ -155,7 +157,7 @@ func TestHandlesIntegrationTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadOwnerCutoff after restart: %v", err)
 	}
-	historyAfter, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), reopened, reader, reopenedCutoff)
+	historyAfter, err := trace.ProjectEffectiveHistoryFromStore(context.Background(), reopened, rttest.Reader, reopenedCutoff)
 	if err != nil {
 		t.Fatalf("re-project: %v", err)
 	}

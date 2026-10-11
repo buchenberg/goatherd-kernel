@@ -1,12 +1,20 @@
-package shepherd
+// Package supervisor is the runtime layer's rules engine: a Supervisor
+// observes the effect bus, decides interventions (inject, fork, discard,
+// halt, deny) through registered SupervisionRules, and acts on scopes
+// through the ScopeManager. The scope tree, the merge gate, and the
+// settlement surface live in the root shepherd package; this package owns
+// the rule engine only.
+package supervisor
 
 import (
 	"fmt"
-	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	trace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // InterventionType identifies the kind of supervisor action.
@@ -46,7 +54,7 @@ type SupervisionRule struct {
 // The supervisor is stateless by default — rules that need state (error
 // rates, repetition tracking) maintain their own via closures.
 type Supervisor struct {
-	manager       *ScopeManager
+	manager       *shepherd.ScopeManager
 	bus           *trace.EffectBus
 	rules         []SupervisionRule
 	interventions chan Intervention
@@ -62,7 +70,7 @@ type Supervisor struct {
 // returned channel.
 //
 // Call Close() to stop the supervisor's background goroutine.
-func NewSupervisor(manager *ScopeManager, bus *trace.EffectBus) *Supervisor {
+func NewSupervisor(manager *shepherd.ScopeManager, bus *trace.EffectBus) *Supervisor {
 	return &Supervisor{
 		manager:       manager,
 		bus:           bus,
@@ -231,7 +239,7 @@ func (s *Supervisor) Halt(scopeID string) error {
 //
 // The returned intervention is the rules' verdict only; acting on it is the
 // caller's decision, unlike Halt which executes immediately.
-func (s *Supervisor) ReviewMerge(scopeID string, proposal MergeProposal) *Intervention {
+func (s *Supervisor) ReviewMerge(scopeID string, proposal shepherd.MergeProposal) *Intervention {
 	paths := make([]string, 0, len(proposal.Changes))
 	for _, c := range proposal.Changes {
 		paths = append(paths, c.Path)
@@ -240,7 +248,7 @@ func (s *Supervisor) ReviewMerge(scopeID string, proposal MergeProposal) *Interv
 	event := trace.EffectEvent{
 		TraceOwnerID: strings.TrimPrefix(proposal.ChildScopeID, "scope:"),
 		Mode:         trace.Declaration,
-		SchemaRef:    SchemaMergeProposed,
+		SchemaRef:    shepherd.SchemaMergeProposed,
 		KindLabel:    "merge:proposed",
 		Payload: map[string]any{
 			"child_scope":     proposal.ChildScopeID,
