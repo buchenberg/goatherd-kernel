@@ -83,8 +83,8 @@ func run(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// Run executes one git command in dir and returns its trimmed stdout. It
-// fails the test if the command errors.
+// Run executes one git command in dir and returns its trimmed stdout and
+// error. The caller is responsible for handling the error.
 func Run(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
 	return run(dir, args...)

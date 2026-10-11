@@ -313,14 +313,17 @@ func (g *GitSandbox) Destroy(ctx context.Context) error {
 
 	repo := g.repo()
 	if _, err := repo.run(ctx, "worktree", "remove", "--force", g.worktreePath); err != nil {
-		// Use a fresh context: cleanup must not be abandoned because the
-		// caller's context expired mid-run.
 		if rmErr := os.RemoveAll(g.worktreePath); rmErr != nil {
 			return fmt.Errorf("git sandbox: remove worktree %s: %w (git worktree remove also failed: %v)",
 				g.worktreePath, rmErr, err)
 		}
+		// Primary path (git worktree remove) failed but fallback succeeded.
+		// Log the original error for debugging.
+		fmt.Fprintf(os.Stderr, "git sandbox: git worktree remove failed (fell back to os.RemoveAll): %v\n", err)
 	}
 
+	// Use a fresh context: cleanup must not be abandoned because the
+	// caller's context expired mid-run.
 	if _, err := repo.run(context.WithoutCancel(ctx), "worktree", "prune"); err != nil {
 		return fmt.Errorf("git sandbox: prune after remove: %w", err)
 	}
