@@ -48,12 +48,11 @@ see its section below.
 
 ## [sandbox/containerd/v0.2.3] - 2026-10-11
 
-The adapter carries its own MIT `LICENSE` under its module path (PR #48):
-the module publishes separately, and a proxy consumer sees only the module
-directory, so the root license alone left it unlicensed from its
-consumers' point of view. No code changes; the adapter still requires
-core `v0.12.0` (v0.13.0 is additive to it from the adapter's point of
-view). Tagged at the PR #48 merge.
+The adapter carries its own MIT `LICENSE` under its module path, added
+in `3c7c632` — the root LICENSE alone left it unlicensed from a proxy
+consumer's point of view, which sees only the module directory. No code
+changes; the adapter still requires core `v0.12.0` (v0.13.0 is additive
+to it from the adapter's point of view). Tagged at that commit.
 
 ## [v0.12.0] - 2026-10-11
 
