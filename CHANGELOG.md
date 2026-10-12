@@ -4,6 +4,33 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.15.0] - 2026-10-12
+
+Plan 07 phases H3+H5 (yaah's `docs/plans/post-adoption-hardening.md`): a
+typed partial-settlement contract and recovery-scan observability. No
+breaking changes.
+
+### Added
+- **`ErrSettleEffectLanded`** — a settle whose physical effect landed on
+  the parent but whose causal merge failed to complete wraps this
+  sentinel, in both the select and apply verbs. The failure can be at
+  any merge stage (validation, the trace append, the post-record sandbox
+  teardown) and the work is landed in all of them; the settle's error
+  names the lifecycle ending the scopes' current state actually allows
+  (Release always; Discard only while both scopes are active — a merged
+  or concurrently retired scope refuses it). Callers detect the sentinel
+  with `errors.Is` instead of guessing (yaah's `settlementLanded`
+  heuristic is deleted in the consumer PR). The output stays
+  unconsumed — the partial-settlement contract.
+- **`RecoverOptions.Stats`** — an opt-in sink receiving the recovery
+  scan's measurements: records scanned per lifecycle schema (raw records
+  read, not derived state — terminal records counted per record, corrupt
+  checkpoint rows counted though they recover nothing) and the scan
+  duration. The counts are written as their scans complete, so a failed
+  recovery reports what it had counted. The recovery scan is O(history);
+  this is the surface that makes the cost visible before it matters. A
+  nil sink recovers unchanged.
+
 ## [v0.14.0] - 2026-10-11
 
 Plan 06 (`docs/06-settlement-recovery-upstream.md`): settlement works over
