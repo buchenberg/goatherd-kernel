@@ -655,14 +655,26 @@ func TestRecover_StatsCountsTheScan(t *testing.T) {
 		t.Fatalf("seal: %v", err)
 	}
 	_ = sealedOut
+	// A terminal record too: a discarded child folds into a terminal
+	// state, and the stats must count the record that was read.
+	dead, err := mgr.Fork(root.ID(), "rec:stats:dead", nil)
+	if err != nil {
+		t.Fatalf("fork dead: %v", err)
+	}
+	if err := root.Discard(dead); err != nil {
+		t.Fatalf("discard dead: %v", err)
+	}
 
 	reopened := reopenStore(t, store, path)
 	var stats RecoveryStats
 	if _, err := RecoverScopes(reopened, RecoverOptions{Stats: &stats}); err != nil {
 		t.Fatalf("recover with stats: %v", err)
 	}
-	if stats.ForkRecords != 2 {
-		t.Errorf("ForkRecords = %d, want 2 (the isolated child and the shared child)", stats.ForkRecords)
+	if stats.ForkRecords != 3 {
+		t.Errorf("ForkRecords = %d, want 3 (the isolated child, the shared child, and the discarded child)", stats.ForkRecords)
+	}
+	if stats.TerminalRecords != 1 {
+		t.Errorf("TerminalRecords = %d, want 1 (the discard record; raw records read, not folded owners)", stats.TerminalRecords)
 	}
 	if stats.CheckpointBlobs != 1 {
 		t.Errorf("CheckpointBlobs = %d, want 1", stats.CheckpointBlobs)

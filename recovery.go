@@ -47,16 +47,20 @@ type RecoverOptions struct {
 	// sealed outputs — not the sandbox re-adoption). The recovery scan
 	// is O(history) with no bound; hosts that run recovery at startup
 	// hand this to their log so the cost is visible long before it
-	// matters (plan 07, H5). The pointer is written once, before
-	// RecoverScopes returns.
+	// matters (plan 07, H5). The counts are written as their scans
+	// complete — a recovery that fails partway reports what it had
+	// counted, so an all-zero Stats after an error means the failure
+	// preceded the first scan. ScanDuration is written only when the
+	// scan phase completes.
 	Stats *RecoveryStats
 }
 
-// RecoveryStats measures one recovery's scan phase.
+// RecoveryStats measures one recovery's scan phase. Every counter reports
+// the raw records the scans read — the O(history) cost — not the derived
+// state: terminal records are counted per record even when several fold
+// into one owner's state, and corrupt checkpoint rows are counted even
+// though they recover nothing.
 type RecoveryStats struct {
-	// ForkRecords, TerminalRecords, and SealedOutputs count the lifecycle
-	// records the scans read; CheckpointBlobs counts the persisted
-	// checkpoint state rows.
 	ForkRecords     int
 	TerminalRecords int
 	CheckpointBlobs int
@@ -123,9 +127,13 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	if err != nil {
 		return nil, err
 	}
-	terminal, err := scanTerminalStates(ctx, store)
+	terminal, terminalRecords, err := scanTerminalStates(ctx, store)
 	if err != nil {
 		return nil, err
+	}
+	if stats != nil {
+		stats.ForkRecords = len(edges)
+		stats.TerminalRecords = terminalRecords
 	}
 
 	mgr := NewScopeManager(store)
@@ -180,14 +188,14 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	if err != nil {
 		return nil, err
 	}
+	if stats != nil {
+		stats.CheckpointBlobs = blobCount
+	}
 	sealedCount, err := recoverOutputs(ctx, mgr, store)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil {
-		stats.ForkRecords = len(edges)
-		stats.TerminalRecords = len(terminal)
-		stats.CheckpointBlobs = blobCount
 		stats.SealedOutputs = sealedCount
 		stats.ScanDuration = time.Since(scanStart)
 	}
@@ -326,12 +334,16 @@ func scanForkRecords(ctx context.Context, store *trace.SQLiteTraceStore) ([]fork
 // terminal state. A child merged then somehow discarded cannot happen (the
 // state machine rejects it), so a collision is a corrupt trace and fails
 // the recovery loudly.
-func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, error) {
+func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map[string]ScopeState, int, error) {
 	records, err := trace.ScanRecordsBySchema(ctx, store, SchemaScopeMerged, SchemaScopeDiscarded, SchemaSupervisorHalt)
 	if err != nil {
-		return nil, fmt.Errorf("scan terminal records: %w", err)
+		return nil, 0, fmt.Errorf("scan terminal records: %w", err)
 	}
 
+	// The raw record count rides beside the folded states: the stats
+	// surface reports the scan's O(history) cost, and several records
+	// can fold into one owner's terminal state.
+	rawRecords := len(records)
 	states := make(map[string]ScopeState)
 	for _, rec := range records {
 		var owner string
@@ -356,11 +368,11 @@ func scanTerminalStates(ctx context.Context, store *trace.SQLiteTraceStore) (map
 			continue
 		}
 		if prior, ok := states[owner]; ok && prior != state {
-			return nil, fmt.Errorf("owner %s is recorded both %s and %s: the trace is inconsistent", owner, prior, state)
+			return nil, 0, fmt.Errorf("owner %s is recorded both %s and %s: the trace is inconsistent", owner, prior, state)
 		}
 		states[owner] = state
 	}
-	return states, nil
+	return states, rawRecords, nil
 }
 
 // edgeFor returns the edge that made owner a child, or nil.
@@ -407,7 +419,9 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 		mgr.checkpoints[cp.ID] = cp
 		mgr.mu.Unlock()
 	}
-	return len(blobs), nil
+	// The corrupt rows are part of the scan's cost even though they
+	// recover nothing; the stats surface reports what was read.
+	return len(blobs) + len(corrupt), nil
 }
 
 // markStaleCheckpoints invalidates recovered checkpoints whose recorded

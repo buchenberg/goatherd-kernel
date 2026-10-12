@@ -681,7 +681,7 @@ func TestSettle_ApplyOverlapOverDirtyBaselineRefusesTyped(t *testing.T) {
 // TestSettle_PhysicalEffectLandsWhenMergeUnrecords pins the typed
 // partial-settlement contract (plan 07, H3): a settle whose physical
 // effect lands but whose causal merge fails to record reports
-// ErrCausalMergeUnrecorded, the work stands anyway, and the output stays
+// ErrSettleEffectLanded, the work stands anyway, and the output stays
 // unconsumed — the caller can end its lifecycle instead of guessing
 // whether a retry would re-apply an effect that already happened.
 func TestSettle_PhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
@@ -708,8 +708,8 @@ func TestSettle_PhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
 	}
 
 	err = mgr.Settle(ctx, out.ID(), SettleSelect)
-	if !errors.Is(err, ErrCausalMergeUnrecorded) {
-		t.Fatalf("settle with an unrecordable merge: %v, want an error wrapping ErrCausalMergeUnrecorded", err)
+	if !errors.Is(err, ErrSettleEffectLanded) {
+		t.Fatalf("settle with an unrecordable merge: %v, want an error wrapping ErrSettleEffectLanded", err)
 	}
 	if got := readRepoFile(t, repo, "result.txt"); got != "landed anyway" {
 		t.Errorf("result.txt = %q; the physical effect must land despite the recording failure", got)
@@ -720,11 +720,11 @@ func TestSettle_PhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
 
 }
 
-// TestSettle_ApplysPhysicalEffectLandsWhenMergeUnrecords is the apply verb's
+// TestSettle_ApplyPhysicalEffectLandsWhenMergeUnrecords is the apply verb's
 // half of the typed partial-settlement contract: with the parent moved on
 // a disjoint path, the three-way merge lands the child's change, the
 // causal-merge recording fails, and the error wraps
-// ErrCausalMergeUnrecorded with the drift preserved and the output
+// ErrSettleEffectLanded with the drift preserved and the output
 // unconsumed.
 func TestSettle_ApplyPhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
 	store, _ := fileStore(t)
@@ -753,8 +753,8 @@ func TestSettle_ApplyPhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
 	}
 
 	err = mgr.Settle(ctx, out.ID(), SettleApply)
-	if !errors.Is(err, ErrCausalMergeUnrecorded) {
-		t.Fatalf("apply with an unrecordable merge: %v, want an error wrapping ErrCausalMergeUnrecorded", err)
+	if !errors.Is(err, ErrSettleEffectLanded) {
+		t.Fatalf("apply with an unrecordable merge: %v, want an error wrapping ErrSettleEffectLanded", err)
 	}
 	if got := readRepoFile(t, repo, "result.txt"); got != "landed anyway" {
 		t.Errorf("result.txt = %q; the merged change must land despite the recording failure", got)
