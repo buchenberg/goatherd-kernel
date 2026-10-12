@@ -440,7 +440,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			// The parent's workspace already holds this output's changes;
 			// the causal merge is what failed. Say both, so the caller does
 			// not retry a physical effect that already happened.
-			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(scope), ErrSettleEffectLanded)
+			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(parent, scope), ErrSettleEffectLanded)
 		}
 
 	case SettleApply:
@@ -467,7 +467,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			return fmt.Errorf("settle %s (apply): %w", out.id, err)
 		}
 		if err := parent.Merge(scope); err != nil {
-			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(scope), ErrSettleEffectLanded)
+			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(parent, scope), ErrSettleEffectLanded)
 		}
 
 	default:
@@ -505,15 +505,20 @@ func settleParent(scope *Scope, out *RetainedOutput, verb string) (*Scope, sandb
 	return parent, parentSb, nil
 }
 
-// settleEnding names the lifecycle ending a partial settle's child
-// state allows: the merge record decides whether the child is still
-// active. A merge that failed before its record leaves the child
-// active, so SettleDiscard can still destroy its sandbox; a merge whose
-// record succeeded and whose SANDBOX teardown failed has already merged
-// the child, and only SettleRelease can end the output.
-func settleEnding(scope *Scope) string {
+// settleEnding names the lifecycle ending a partial settle's scopes
+// allow. SettleRelease always works. SettleDiscard routes to
+// parent.Discard, which requires BOTH scopes active: the merge record
+// decides the child (failed-before-record leaves it active; a teardown
+// failure has already merged it), and a concurrently retired parent or
+// child — halted or discarded while the settle's physical I/O ran —
+// refuses Discard just the same. The error names the ending that will
+// actually succeed, not the one that usually does.
+func settleEnding(parent, scope *Scope) string {
 	if scope.State() == ScopeMerged {
 		return "the causal merge is recorded; end it with SettleRelease (SettleDiscard refuses a merged child)"
+	}
+	if parent == nil || parent.State() != ScopeActive || scope.State() != ScopeActive {
+		return "end it with SettleRelease (a scope is no longer active; SettleDiscard refuses it)"
 	}
 	return "end it with SettleRelease or SettleDiscard"
 }
