@@ -623,3 +623,71 @@ func TestRecover_RelativeRecordedPathRefuses(t *testing.T) {
 		t.Error("the child was resolved despite the invalid recorded path; validation must fail before the resolver sees it")
 	}
 }
+
+// TestRecover_StatsCountsTheScan is plan 07 H5's observability law: a
+// recovery handed a Stats sink gets the scan phase's measurements — the
+// lifecycle record counts the scans read and the scan's duration — so a
+// host that recovers at startup can see the O(history) cost long before
+// it matters. A nil sink recovers unchanged.
+func TestRecover_StatsCountsTheScan(t *testing.T) {
+	store, path := fileStore(t)
+	ctx := context.Background()
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+
+	root, err := mgr.Create("rec:stats:parent", git.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	_, wtPath := forkWorktreeChild(t, mgr, root.ID(), "rec:stats:child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("work"), 0o644); err != nil {
+		t.Fatalf("child writes: %v", err)
+	}
+	shared, err := mgr.Fork(root.ID(), "rec:stats:shared", nil)
+	if err != nil {
+		t.Fatalf("fork shared: %v", err)
+	}
+	if _, err := mgr.CreateCheckpoint(ctx, shared.ID(), []byte("conversation")); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	sealedOut, err := mgr.Seal(ctx, shared.ID())
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	_ = sealedOut
+	// A terminal record too: a discarded child folds into a terminal
+	// state, and the stats must count the record that was read.
+	dead, err := mgr.Fork(root.ID(), "rec:stats:dead", nil)
+	if err != nil {
+		t.Fatalf("fork dead: %v", err)
+	}
+	if err := root.Discard(dead); err != nil {
+		t.Fatalf("discard dead: %v", err)
+	}
+
+	reopened := reopenStore(t, store, path)
+	var stats RecoveryStats
+	if _, err := RecoverScopes(reopened, RecoverOptions{Stats: &stats}); err != nil {
+		t.Fatalf("recover with stats: %v", err)
+	}
+	if stats.ForkRecords != 3 {
+		t.Errorf("ForkRecords = %d, want 3 (the isolated child, the shared child, and the discarded child)", stats.ForkRecords)
+	}
+	if stats.TerminalRecords != 1 {
+		t.Errorf("TerminalRecords = %d, want 1 (the discard record; raw records read, not folded owners)", stats.TerminalRecords)
+	}
+	if stats.CheckpointBlobs != 1 {
+		t.Errorf("CheckpointBlobs = %d, want 1", stats.CheckpointBlobs)
+	}
+	if stats.SealedOutputs != 1 {
+		t.Errorf("SealedOutputs = %d, want 1", stats.SealedOutputs)
+	}
+	if stats.ScanDuration <= 0 {
+		t.Errorf("ScanDuration = %s, want a measured positive duration", stats.ScanDuration)
+	}
+
+	// A nil sink is the unchanged recovery.
+	if _, err := RecoverScopes(reopened, RecoverOptions{}); err != nil {
+		t.Fatalf("recover without stats: %v", err)
+	}
+}

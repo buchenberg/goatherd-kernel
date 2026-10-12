@@ -59,6 +59,24 @@ var ErrOutputConsumed = errors.New("shepherd: retained output already settled")
 // conflict — apply failure never consumes.
 var ErrApplyConflict = errors.New("shepherd: apply conflict")
 
+// ErrSettleEffectLanded reports a settle whose physical effect landed
+// on the parent's workspace but whose causal merge failed to complete.
+// The workspace change happens before the merge, so a blind retry would
+// re-apply an effect that already happened; callers detecting this
+// sentinel should treat the work as standing on the parent and end the
+// output's lifecycle rather than retry. The failure may be at any merge
+// stage — validation, the trace append, or the post-record sandbox
+// teardown — and the work is landed in all of them. The lifecycle ending
+// differs by stage: SettleRelease always works and keeps the landed
+// work; SettleDiscard additionally destroys the child's sandbox, which
+// requires the child still active — true when the merge failed before
+// its record (validation, append), false after a teardown failure (the
+// child is already merged; discard refuses it). The settle's error
+// message names the ending its child's state allows. The output stays
+// unconsumed — the kernel's own partial-settlement contract. Wrapped in
+// the settle error alongside the merge failure.
+var ErrSettleEffectLanded = errors.New("shepherd: settle effect landed")
+
 // RetainedOutput is a sealed child result: the child's captured workspace
 // frozen at seal time, settle-able exactly once. It outlives the scope that
 // sealed it — sealing does not merge — so a supervisor can compare sealed
@@ -316,6 +334,12 @@ func stateFor(action SettlementAction) (OutputState, error) {
 //     merged onto the parent's current workspace (sandbox.DeltaApplier). A path
 //     overlap returns ErrApplyConflict and consumes nothing; so does any
 //     merge failure — apply failure never consumes.
+//
+// Both physical verbs record the causal merge AFTER the workspace change:
+// if the recording fails, the work has already landed and the error wraps
+// ErrSettleEffectLanded — the caller knows the effect happened and must
+// not retry it, and the output stays unconsumed for exactly that
+// distinction.
 //   - released: mark consumed, keep the sealed state addressable. No
 //     workspace change; the scope's lifecycle is the caller's to finish.
 //   - discarded: the child scope is discarded (destroying a sandbox it
@@ -416,7 +440,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			// The parent's workspace already holds this output's changes;
 			// the causal merge is what failed. Say both, so the caller does
 			// not retry a physical effect that already happened.
-			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard)", out.id, err)
+			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(parent, scope), ErrSettleEffectLanded)
 		}
 
 	case SettleApply:
@@ -443,7 +467,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			return fmt.Errorf("settle %s (apply): %w", out.id, err)
 		}
 		if err := parent.Merge(scope); err != nil {
-			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard)", out.id, err)
+			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but completing the causal merge failed: %w (the output stays unconsumed; %s): %w", out.id, err, settleEnding(parent, scope), ErrSettleEffectLanded)
 		}
 
 	default:
@@ -479,6 +503,24 @@ func settleParent(scope *Scope, out *RetainedOutput, verb string) (*Scope, sandb
 		return nil, nil, fmt.Errorf("settle %s (%s): parent %s has no sandbox", out.id, verb, parent.ID())
 	}
 	return parent, parentSb, nil
+}
+
+// settleEnding names the lifecycle ending a partial settle's scopes
+// allow. SettleRelease always works. SettleDiscard routes to
+// parent.Discard, which requires BOTH scopes active: the merge record
+// decides the child (failed-before-record leaves it active; a teardown
+// failure has already merged it), and a concurrently retired parent or
+// child — halted or discarded while the settle's physical I/O ran —
+// refuses Discard just the same. The error names the ending that will
+// actually succeed, not the one that usually does.
+func settleEnding(parent, scope *Scope) string {
+	if scope.State() == ScopeMerged {
+		return "the causal merge is recorded; end it with SettleRelease (SettleDiscard refuses a merged child)"
+	}
+	if parent == nil || parent.State() != ScopeActive || scope.State() != ScopeActive {
+		return "end it with SettleRelease (a scope is no longer active; SettleDiscard refuses it)"
+	}
+	return "end it with SettleRelease or SettleDiscard"
 }
 
 // overlappingPaths returns the sealed output's changed paths that the parent

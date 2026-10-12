@@ -677,3 +677,92 @@ func TestSettle_ApplyOverlapOverDirtyBaselineRefusesTyped(t *testing.T) {
 		t.Fatalf("SettleRelease after a refused apply: %v", err)
 	}
 }
+
+// TestSettle_PhysicalEffectLandsWhenMergeUnrecords pins the typed
+// partial-settlement contract (plan 07, H3): a settle whose physical
+// effect lands but whose causal merge fails to record reports
+// ErrSettleEffectLanded, the work stands anyway, and the output stays
+// unconsumed — the caller can end its lifecycle instead of guessing
+// whether a retry would re-apply an effect that already happened.
+func TestSettle_PhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
+	store, _ := fileStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:partial-parent", git.NewLocalGitSandbox(repo))
+
+	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:partial-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("landed anyway"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The causal merge records to the store; closing it makes the
+	// recording fail while the physical verbs — capture, apply — touch
+	// only git. This is the exact partial-settlement window.
+	if err := store.Close(ctx); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	err = mgr.Settle(ctx, out.ID(), SettleSelect)
+	if !errors.Is(err, ErrSettleEffectLanded) {
+		t.Fatalf("settle with an unrecordable merge: %v, want an error wrapping ErrSettleEffectLanded", err)
+	}
+	if got := readRepoFile(t, repo, "result.txt"); got != "landed anyway" {
+		t.Errorf("result.txt = %q; the physical effect must land despite the recording failure", got)
+	}
+	if out.State() != OutputUnconsumed {
+		t.Errorf("output state = %s, want unconsumed — the caller must be able to end the lifecycle", out.State())
+	}
+
+}
+
+// TestSettle_ApplyPhysicalEffectLandsWhenMergeUnrecords is the apply verb's
+// half of the typed partial-settlement contract: with the parent moved on
+// a disjoint path, the three-way merge lands the child's change, the
+// causal-merge recording fails, and the error wraps
+// ErrSettleEffectLanded with the drift preserved and the output
+// unconsumed.
+func TestSettle_ApplyPhysicalEffectLandsWhenMergeUnrecords(t *testing.T) {
+	store, _ := fileStore(t)
+	mgr := NewScopeManager(store)
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	parent, _ := mgr.Create("set:partial-apply-parent", git.NewLocalGitSandbox(repo))
+
+	child, wtPath := forkWorktreeChild(t, mgr, parent.ID(), "set:partial-apply-child", repo, "wt")
+	if err := os.WriteFile(filepath.Join(wtPath, "result.txt"), []byte("landed anyway"), 0o644); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	out, err := mgr.Seal(ctx, child.ID())
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// The parent moves on a path disjoint from the output's changes, so
+	// the settle takes the three-way apply path.
+	if err := os.WriteFile(filepath.Join(repo, "drift.txt"), []byte("parent drift"), 0o644); err != nil {
+		t.Fatalf("write drift: %v", err)
+	}
+
+	if err := store.Close(ctx); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	err = mgr.Settle(ctx, out.ID(), SettleApply)
+	if !errors.Is(err, ErrSettleEffectLanded) {
+		t.Fatalf("apply with an unrecordable merge: %v, want an error wrapping ErrSettleEffectLanded", err)
+	}
+	if got := readRepoFile(t, repo, "result.txt"); got != "landed anyway" {
+		t.Errorf("result.txt = %q; the merged change must land despite the recording failure", got)
+	}
+	if got := readRepoFile(t, repo, "drift.txt"); got != "parent drift" {
+		t.Errorf("drift.txt = %q; the parent's disjoint drift must survive the landed merge", got)
+	}
+	if out.State() != OutputUnconsumed {
+		t.Errorf("output state = %s, want unconsumed", out.State())
+	}
+}
