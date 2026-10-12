@@ -127,12 +127,14 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	if err != nil {
 		return nil, err
 	}
+	if stats != nil {
+		stats.ForkRecords = len(edges)
+	}
 	terminal, terminalRecords, err := scanTerminalStates(ctx, store)
 	if err != nil {
 		return nil, err
 	}
 	if stats != nil {
-		stats.ForkRecords = len(edges)
 		stats.TerminalRecords = terminalRecords
 	}
 
