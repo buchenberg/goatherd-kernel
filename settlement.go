@@ -59,6 +59,16 @@ var ErrOutputConsumed = errors.New("shepherd: retained output already settled")
 // conflict — apply failure never consumes.
 var ErrApplyConflict = errors.New("shepherd: apply conflict")
 
+// ErrCausalMergeUnrecorded reports a settle whose physical effect landed
+// on the parent's workspace but whose causal merge failed to record. The
+// workspace change happens before the merge record, so a blind retry
+// would re-apply an effect that already happened; callers detecting this
+// sentinel should treat the work as landed and end the output's lifecycle
+// (SettleRelease keeps it, SettleDiscard rolls it back) rather than retry.
+// The output stays unconsumed — the kernel's own partial-settlement
+// contract. Wrapped in the settle error alongside the recording failure.
+var ErrCausalMergeUnrecorded = errors.New("shepherd: causal merge unrecorded")
+
 // RetainedOutput is a sealed child result: the child's captured workspace
 // frozen at seal time, settle-able exactly once. It outlives the scope that
 // sealed it — sealing does not merge — so a supervisor can compare sealed
@@ -316,6 +326,12 @@ func stateFor(action SettlementAction) (OutputState, error) {
 //     merged onto the parent's current workspace (sandbox.DeltaApplier). A path
 //     overlap returns ErrApplyConflict and consumes nothing; so does any
 //     merge failure — apply failure never consumes.
+//
+// Both physical verbs record the causal merge AFTER the workspace change:
+// if the recording fails, the work has already landed and the error wraps
+// ErrCausalMergeUnrecorded — the caller knows the effect happened and must
+// not retry it, and the output stays unconsumed for exactly that
+// distinction.
 //   - released: mark consumed, keep the sealed state addressable. No
 //     workspace change; the scope's lifecycle is the caller's to finish.
 //   - discarded: the child scope is discarded (destroying a sandbox it
@@ -416,7 +432,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			// The parent's workspace already holds this output's changes;
 			// the causal merge is what failed. Say both, so the caller does
 			// not retry a physical effect that already happened.
-			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard)", out.id, err)
+			return fmt.Errorf("settle %s (select): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard): %w", out.id, err, ErrCausalMergeUnrecorded)
 		}
 
 	case SettleApply:
@@ -443,7 +459,7 @@ func (m *ScopeManager) Settle(ctx context.Context, outputID string, action Settl
 			return fmt.Errorf("settle %s (apply): %w", out.id, err)
 		}
 		if err := parent.Merge(scope); err != nil {
-			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard)", out.id, err)
+			return fmt.Errorf("settle %s (apply): the parent's workspace now holds this output's changes, but recording the causal merge failed: %w (the output stays unconsumed; end it with SettleRelease or SettleDiscard): %w", out.id, err, ErrCausalMergeUnrecorded)
 		}
 
 	default:

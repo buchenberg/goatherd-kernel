@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	sandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	trace "github.com/buchenberg/shepherd-kernel-go/trace"
@@ -39,6 +40,29 @@ type RecoverOptions struct {
 	// (plan 06, U2); a recorded non-absolute path fails the recovery
 	// before the resolver sees it.
 	Resolver func(scopeID, backend, path string) (sandbox.Sandbox, error)
+
+	// Stats, when non-nil, receives the recovery's scan measurements:
+	// records scanned per lifecycle schema and the total scan duration
+	// (the scan phase — fork records, terminal states, checkpoint blobs,
+	// sealed outputs — not the sandbox re-adoption). The recovery scan
+	// is O(history) with no bound; hosts that run recovery at startup
+	// hand this to their log so the cost is visible long before it
+	// matters (plan 07, H5). The pointer is written once, before
+	// RecoverScopes returns.
+	Stats *RecoveryStats
+}
+
+// RecoveryStats measures one recovery's scan phase.
+type RecoveryStats struct {
+	// ForkRecords, TerminalRecords, and SealedOutputs count the lifecycle
+	// records the scans read; CheckpointBlobs counts the persisted
+	// checkpoint state rows.
+	ForkRecords     int
+	TerminalRecords int
+	CheckpointBlobs int
+	SealedOutputs   int
+	// ScanDuration is the wall time of the whole scan phase.
+	ScanDuration time.Duration
 }
 
 // resolve is the nil-safe form of opts.Resolver.
@@ -93,6 +117,8 @@ type forkEdge struct {
 func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeManager, error) {
 	ctx := context.Background()
 
+	stats := opts.Stats
+	scanStart := time.Now()
 	edges, err := scanForkRecords(ctx, store)
 	if err != nil {
 		return nil, err
@@ -150,11 +176,20 @@ func RecoverScopes(store *trace.SQLiteTraceStore, opts RecoverOptions) (*ScopeMa
 	}
 	mgr.mu.Unlock()
 
-	if err := recoverCheckpoints(ctx, mgr, store); err != nil {
+	blobCount, err := recoverCheckpoints(ctx, mgr, store)
+	if err != nil {
 		return nil, err
 	}
-	if err := recoverOutputs(ctx, mgr, store); err != nil {
+	sealedCount, err := recoverOutputs(ctx, mgr, store)
+	if err != nil {
 		return nil, err
+	}
+	if stats != nil {
+		stats.ForkRecords = len(edges)
+		stats.TerminalRecords = len(terminal)
+		stats.CheckpointBlobs = blobCount
+		stats.SealedOutputs = sealedCount
+		stats.ScanDuration = time.Since(scanStart)
 	}
 
 	// Attach sandboxes: roots via the resolver (not owned, matching
@@ -342,10 +377,10 @@ func edgeFor(edges []forkEdge, childOwner string) *forkEdge {
 // blobs. A checkpoint whose scope is unknown to the fork scan introduces a
 // bare root scope: the blob proves the scope existed even though it never
 // left a lifecycle record.
-func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) error {
+func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) (int, error) {
 	blobs, corrupt, err := trace.LoadCheckpointBlobs(ctx, store)
 	if err != nil {
-		return fmt.Errorf("recover checkpoints: %w", err)
+		return 0, fmt.Errorf("recover checkpoints: %w", err)
 	}
 	for _, id := range corrupt {
 		slog.Warn("recovery: skipping checkpoint with undecodable state row", "checkpoint", id)
@@ -367,12 +402,12 @@ func recoverCheckpoints(ctx context.Context, mgr *ScopeManager, store *trace.SQL
 		mgr.mu.Lock()
 		if existing, exists := mgr.checkpoints[cp.ID]; exists {
 			mgr.mu.Unlock()
-			return fmt.Errorf("recovered checkpoint ID collision: %s (scopes %s, %s)", cp.ID, existing.ScopeID, cp.ScopeID)
+			return 0, fmt.Errorf("recovered checkpoint ID collision: %s (scopes %s, %s)", cp.ID, existing.ScopeID, cp.ScopeID)
 		}
 		mgr.checkpoints[cp.ID] = cp
 		mgr.mu.Unlock()
 	}
-	return nil
+	return len(blobs), nil
 }
 
 // markStaleCheckpoints invalidates recovered checkpoints whose recorded
@@ -424,14 +459,14 @@ func markStaleCheckpoints(ctx context.Context, mgr *ScopeManager) error {
 // settled records. Sealed payloads carry the full states and change list,
 // so a recovered output is settle-able; settled records mark the terminal
 // ones.
-func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) error {
+func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteTraceStore) (int, error) {
 	sealed, err := trace.ScanRecordsBySchema(ctx, store, SchemaRunOutputSealed)
 	if err != nil {
-		return fmt.Errorf("recover outputs: scan sealed records: %w", err)
+		return 0, fmt.Errorf("recover outputs: scan sealed records: %w", err)
 	}
 	settled, err := trace.ScanRecordsBySchema(ctx, store, SchemaRunOutputSettled)
 	if err != nil {
-		return fmt.Errorf("recover outputs: scan settled records: %w", err)
+		return 0, fmt.Errorf("recover outputs: scan settled records: %w", err)
 	}
 
 	terminals := make(map[string]string) // output id -> action
@@ -491,13 +526,13 @@ func recoverOutputs(ctx context.Context, mgr *ScopeManager, store *trace.SQLiteT
 		mgr.mu.Lock()
 		if existing, exists := mgr.outputs[out.id]; exists {
 			mgr.mu.Unlock()
-			return fmt.Errorf("recovered output ID collision: %s (scopes %s, %s)", out.id, existing.scopeID, out.scopeID)
+			return 0, fmt.Errorf("recovered output ID collision: %s (scopes %s, %s)", out.id, existing.scopeID, out.scopeID)
 		}
 		out.mgr = mgr
 		mgr.outputs[out.id] = out
 		mgr.mu.Unlock()
 	}
-	return nil
+	return len(sealed), nil
 }
 
 // workspaceStateFromPayload decodes a state encoded by the lifecycle
