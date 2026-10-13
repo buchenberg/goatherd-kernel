@@ -4,6 +4,27 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+The containerd sandbox backend moves out of this project, extracted with
+its history to its own repository — it was originally added as an
+alternative to the git backends (a container per scope) but grew into a
+general isolated-workspace substrate that has nothing to do with
+shepherding. The kernel now ships its git backends only; the `Sandbox`
+interface and registry remain the pluggable seam, and a host that wants
+container isolation brings its own backend. No compatibility is kept.
+
+### Removed
+- **`sandbox/containerd`** — the nested module is deleted from the tree;
+  its `sandbox/containerd/vX.Y.Z` tags are final (v0.2.3). Its code,
+  tests, and verification record (`docs/containerd.md`) moved with it.
+- **CI** — the `containerd` adapter job and the `sandbox/**` tag trigger
+  are removed; no nested modules ride this repository's releases anymore.
+
+### Unchanged
+- The core module: go 1.21, one dependency, no containerd imports, the
+  `Sandbox` interface and backend registry as they were.
+
 ## [v0.15.0] - 2026-10-12
 
 Plan 07 phases H3+H5 (yaah's `docs/plans/post-adoption-hardening.md`): a

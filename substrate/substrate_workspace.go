@@ -2,7 +2,7 @@ package substrate
 
 // WorkspaceSubstrate (plan 03 §3, Go-native bridge): a Substrate over a
 // sandbox.Sandbox, so recorded intents can actually reach a workspace (git or
-// containerd) through the same declare -> capture rhythm as the kernel.
+// worktree) through the same declare -> capture rhythm as the kernel.
 //
 // This substrate has no Python counterpart — it is the deliberate Go-native
 // payoff of plan 03 — so its schema vocabulary is defined here:
@@ -168,7 +168,7 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Re
 //
 // The dividing line is whether the world was touched, not whether captures
 // exist: a failure *after* a sandbox call was made may have partially applied
-// (the containerd backend writes files in chunks through its exec shellouts,
+// (an exec-shelling backend writes files in chunks,
 // so a write can fail with earlier chunks already on disk; an exec can run to
 // completion and fail during teardown), so reporting clean_failure would
 // claim a world state that was not verified. Such failures are split_state
@@ -291,8 +291,9 @@ func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record trace.Record)
 		req.Timeout = time.Duration(ms) * time.Millisecond
 	}
 	// The declared timeout is enforced here rather than delegated: a sandbox
-	// backend is only required to honor the context it is given, and the
-	// containerd backend observes ctx without reading sandbox.ExecRequest.Timeout.
+	// backend is only required to honor the context it is given, and an
+	// exec-shelling backend may observe ctx without reading
+	// sandbox.ExecRequest.Timeout.
 	// Deriving a deadline-bearing context makes the declaration mean the
 	// same thing for every backend.
 	if req.Timeout > 0 {

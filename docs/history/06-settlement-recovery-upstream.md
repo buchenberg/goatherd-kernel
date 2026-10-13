@@ -208,15 +208,17 @@ uncommitted content appears on neither side.
 
 **Contract promotion, scoped honestly.** "A capture of unchanged content
 must be digest-stable" is the backend contract this plan establishes — and
-it is currently violated by the containerd backend, which stamps each
-capture with a sequence key (`shepherd/<id>/committed/<seq>`,
-sandbox/containerd/sandbox.go:558-567) into both `Revision` and `Data`, so
+it was violated by the containerd backend this project once shipped
+(extracted since; that backend is no longer part of this repository),
+which stamped each capture with a sequence key into both `Revision`
+and `Data`, so
 every capture digests differently even over identical content. An audit
 cannot establish the contract there. Scope it therefore: the git backend
 satisfies it in Phase A and the contract is documented on the `Sandbox`
 interface as the goal; the containerd capture-identity violation is
-recorded as its own follow-up gap (alongside the already-recorded
-re-adoptable-container-identity gap) and is explicitly out of scope here —
+recorded as its own follow-up gap
+(alongside the already-recorded re-adoptable-container-identity gap) and
+was explicitly out of scope here —
 its sequence keys are also its retention mechanism, so reworking them is a
 design task, not an audit finding.
 
@@ -300,8 +302,8 @@ in Phase D.
   a delta with neither key errors instead of silently no-opping.
 - Diff bases on `tree_sha` (legacy fallback: `Revision`).
 - Backend-contract doc on `Sandbox`, scoped per the contract-promotion
-  note (containerd recorded as a known violation, not audited into
-  compliance).
+  note (the containerd backend recorded as a known violation, not
+  audited into compliance).
 - **Tests** (law-coverage process, all three OSes in CI):
   - two captures of an identical *dirty* tree digest equal — repeated
     across a >1s gap to kill the same-second luck class outright;
@@ -433,10 +435,9 @@ incompatibility and its sole consumer is coordinated.
 
 - No change to settlement's consume-once contract or the merge gate.
 - No change to checkpoint staleness semantics (revision-based, deliberate).
-- No new backends; no containerd work here — not its re-adoptable
-  container identity (already recorded), and not its sequence-keyed
-  capture identity, which this plan records as a known contract violation
-  and a separate follow-up gap (its snapshot keys are also its retention
-  mechanism; reworking them is its own design task).
+- No new backends; no containerd work here — the backend has been
+  extracted from this repository, and its known contract violations
+  (the re-adoptable container identity and the sequence-keyed capture
+  identity) are that project's follow-ups now.
 - No materialization/substrate work (fenced per the yaah adoption plan's
   D7).
