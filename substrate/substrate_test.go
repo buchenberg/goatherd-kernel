@@ -473,7 +473,7 @@ func TestWorkspaceSubstrateRecordsExecOutcome(t *testing.T) {
 	}
 	// The declared timeout is enforced by the substrate via the context, so
 	// it reaches every backend regardless of whether the backend reads
-	// sandbox.ExecRequest.Timeout itself (the containerd backend does not).
+	// sandbox.ExecRequest.Timeout itself (an exec-shelling backend may not).
 	if len(sb.execDeadlines) != 1 || !sb.execDeadlines[0] {
 		t.Errorf("exec ctx deadlines = %v, want one deadline from timeout_ms=500", sb.execDeadlines)
 	}

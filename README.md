@@ -8,7 +8,7 @@ A content-addressed, append-only, causally-linked execution trace store over SQL
 
 The kernel records agent actions as durable, inspectable, reversible traces. Every tool call, every file mutation, every agent decision becomes a record in a causal DAG with content-addressed identity.
 
-Reversibility is real, not notional: scopes carry a pluggable **Sandbox** that captures, restores, and diffs the workspace they operate on, so a speculative branch can be rolled back or discarded outright. Three sandbox backends ship: an in-place git materializer that works on any platform, a git-worktree backend that isolates each branch in its own checkout, and a containerd backend that runs each branch in its own container (a nested module; see [docs/containerd.md](docs/containerd.md)).
+Reversibility is real, not notional: scopes carry a pluggable **Sandbox** that captures, restores, and diffs the workspace they operate on, so a speculative branch can be rolled back or discarded outright. Two sandbox backends ship: an in-place git materializer that works on any platform and a git-worktree backend that isolates each branch in its own checkout. The interface is pluggable — a host can register any implementation of its own (a container backend, for example).
 
 This is a standalone Go module implementing `shepherd.kernel.abi.v0` — the same frozen ABI as the Python reference (`shepherd2`) and produces byte-identical digests from the same golden test vectors.
 
@@ -365,16 +365,6 @@ trace  <-  sandbox  <-  substrate  <-  materialize
 | `substrate` | the `Substrate` contract, the registry (unknown substrate refs fail the materialization), the echo/KV/workspace substrates |
 | `materialize` | the materialize orchestrator (owns the append; substrates never do) |
 | `internal/gittest`, `internal/testvectors`, `internal/rttest` | test support shared across packages |
-| `sandbox/containerd` | the containerd backend, a nested module |
-
-The v0.11 package move broke imports that used the root package for
-component symbols (`shepherd.NewSQLiteTraceStore` -> `trace.NewSQLiteTraceStore`,
-`shepherd.NewLocalGitSandbox` -> `sandbox.NewLocalGitSandbox`, and so on);
-the CHANGELOG's v0.11.0 section carries the full migration table. Runtime
-symbols (`shepherd.NewScope`, `shepherd.NewScopeManager`, ...) are
-unchanged. (The git constructors have since moved again — to `sandbox/git`
-— and the task/supervisor symbols to their own packages; the CHANGELOG's
-v0.13.0 section carries those migrations.)
 
 ## Core Concepts
 
@@ -455,10 +445,8 @@ Three backend modes ship, packaged on purpose:
 |---|---|---|---|---|---|
 | `git` | in-place (`git.NewLocalGitSandbox`) | No — validates only | No | `uncontained` | `sandbox/git`, in the core module |
 | `git` | worktree (`git.NewWorktreeSandbox`) | Yes — real worktrees | Yes | `buffered` | `sandbox/git`, in the core module |
-| `containerd` | container per scope | Yes — snapshots + leases | Yes | `contained` | `sandbox/containerd`, a nested module |
 
 - **git** — the core module's `sandbox/git` subpackage. A materializer, not an isolation boundary; zero external dependencies; the carrier the kernel's own test suite rides on. Works on any platform.
-- **containerd** — a nested module so its dependency tree stays out of the core. It runs **anywhere a containerd daemon runs: native Linux, WSL2, or a Linux server** — Linux is a runtime requirement (containerd and overlayfs are Linux), not a build-tag fact; the module cross-compiles on Windows and macOS even though the daemon does not run there. It implements `sandbox.DeltaApplier` (settlement's `SettleApply` works on containerd scopes), runs unprivileged (any user sharing the containerd socket group, since `v0.2.1`), and its live verification record is in [docs/containerd.md](docs/containerd.md).
 
 Any type implementing the `Sandbox` interface is swappable in — the
 kernel never inspects a backend beyond the opaque
@@ -466,8 +454,9 @@ kernel never inspects a backend beyond the opaque
 register factories and the host resolves a configured name:
 
 ```go
-// Config-driven construction: the git backend (sandbox/git) self-registers, and
-// the containerd backend self-registers when its package is imported.
+// Config-driven construction: the git backend (sandbox/git) self-registers; a
+// host-supplied backend registers itself the same way when its package is
+// imported.
 sb, err := sandbox.OpenSandbox("git", git.GitSandboxConfig{RepoPath: repoPath})
 
 _, err = sandbox.OpenSandbox("podman", nil)    // -> ErrUnknownSandboxBackend, listing what IS registered
@@ -705,8 +694,8 @@ go vet ./...
 The suite covers the golden vectors (hash-pinned against the Python
 reference), the store ABI (append idempotency, conflicts, witness chains,
 frontier/cut resolution, authorization), scopes and checkpoints, the merge
-gate and settlement recipes, supervision, both sandbox backends (the
-containerd live suite is env-gated on a daemon), and the restart-recovery
+gate and settlement recipes, supervision, the sandbox backends, and the
+restart-recovery
 round trips. CI runs it on Linux, macOS, and Windows with the race
 detector on, plus a golden-drift check against the pinned Python
 reference.
@@ -716,10 +705,6 @@ reference.
 - `modernc.org/sqlite` — pure Go SQLite driver (no CGo). The core module has exactly one direct dependency.
 - Go 1.21+
 
-The `sandbox/containerd/` adapter is a nested module with its own `go.mod`, so its (much larger) dependency graph never enters the core module. It is excluded from `go build ./...` and `go test ./...` here; build it from its own directory.
-
 ## License
 
-MIT — see [LICENSE](LICENSE), matching the upstream Python reference. The
-`sandbox/containerd` nested module carries the same license under its own
-path.
+MIT — see [LICENSE](LICENSE), matching the upstream Python reference.

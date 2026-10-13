@@ -168,7 +168,7 @@ func (w *WorkspaceSubstrate) Materialize(ctx context.Context, records []trace.Re
 //
 // The dividing line is whether the world was touched, not whether captures
 // exist: a failure *after* a sandbox call was made may have partially applied
-// (the containerd backend writes files in chunks through its exec shellouts,
+// (an exec-shelling backend writes files in chunks,
 // so a write can fail with earlier chunks already on disk; an exec can run to
 // completion and fail during teardown), so reporting clean_failure would
 // claim a world state that was not verified. Such failures are split_state
@@ -292,7 +292,8 @@ func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record trace.Record)
 	}
 	// The declared timeout is enforced here rather than delegated: a sandbox
 	// backend is only required to honor the context it is given, and the
-	// containerd backend observes ctx without reading sandbox.ExecRequest.Timeout.
+	// an exec-shelling backend may observe ctx without reading
+	// sandbox.ExecRequest.Timeout.
 	// Deriving a deadline-bearing context makes the declaration mean the
 	// same thing for every backend.
 	if req.Timeout > 0 {

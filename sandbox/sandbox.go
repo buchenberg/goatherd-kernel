@@ -4,8 +4,8 @@
 // honestly - unsupported operations return ErrUnsupported rather than
 // pretending - and Capture/Diff never mutate the caller's index. The git
 // backend (in-place and detached-worktree modes) ships as the subpackage
-// sandbox/git in the core module; the containerd backend ships as the
-// nested module sandbox/containerd.
+// sandbox/git in the core module. Other backends are host-supplied: any
+// type implementing Sandbox can register itself with RegisterSandbox.
 package sandbox
 
 import (
@@ -133,9 +133,10 @@ type Sandbox interface {
 	// like settlement's select verb deliberately treat it as moved,
 	// because their reset semantics would discard the commit; the
 	// apply verb merges instead. The git backend satisfies this with
-	// content-derived identities; the containerd backend does not yet —
-	// its captures carry a per-capture sequence key — and is a recorded
-	// follow-up gap, not a silent violation.
+	// content-derived identities; a snapshot-backed backend whose
+	// captures carry a per-capture sequence key does not, and must
+	// record that as its own follow-up gap rather than silently
+	// violating the contract.
 	Capture(ctx context.Context) (trace.WorkspaceState, error)
 
 	// Apply resets the workspace to a previously captured state. The git
@@ -172,7 +173,8 @@ type Sandbox interface {
 //
 // Backends that cannot merge a delta return ErrUnsupported from the
 // assertion's absence — callers detect the capability with a type
-// assertion, the same pattern the containerd adapter's StateReleaser uses.
+// assertion — a backend adds an optional surface without a kernel-wide
+// interface change.
 // Keeping this off the Sandbox interface means adding it is a backend
 // decision, not a kernel-wide breaking change.
 type DeltaApplier interface {
@@ -325,11 +327,10 @@ func (r *sandboxRegistry) backendsLocked() []string {
 }
 
 // defaultSandboxRegistry is the package-level registry. The built-in git
-// backend self-registers from sandbox_git.go; the nested containerd module
-// cannot self-register until it repins to a core release carrying this
-// registry, so hosts register it at wiring time — a host that never imports
-// a backend cannot select it, which keeps the dependency tree honest:
-// config can name a backend, only imports can provide one.
+// backend self-registers from sandbox_git.go; host-supplied backends
+// register at wiring time — a host that never imports a backend cannot
+// select it, which keeps the dependency tree honest: config can name
+// a backend, only imports can provide one.
 var defaultSandboxRegistry = &sandboxRegistry{factories: map[string]SandboxFactory{}}
 
 // RegisterSandbox registers a backend for OpenSandbox. Intended for

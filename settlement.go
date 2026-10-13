@@ -347,8 +347,8 @@ func stateFor(action SettlementAction) (OutputState, error) {
 //
 // Select and apply end with a causal merge of the child into the parent,
 // which also destroys a child-owned sandbox — safe because the sealed state
-// outlives it (git worktrees share the object store; the containerd adapter
-// pins captured states on a lease).
+// outlives it (git worktrees share the object store; a snapshot-backed
+// backend pins captured states on a lease).
 //
 // Records shepherd.run_output.settled.v1 on the sealing scope's owner path.
 // The append is advisory, checkpoint-style: by the time it runs the

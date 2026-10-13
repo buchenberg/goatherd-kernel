@@ -7,7 +7,7 @@ package layout. What remains is the v1.0 gate below, then the API freeze.
 
 The completed workstreams are archived verbatim in
 [`docs/history/`](history/) — the master plan with every task ticked, the
-workstream plans 01–05, the parity comparison, and the historical gap and
+workstream plans 01–06, the parity comparison, and the historical gap and
 dev plans. This document carries only what is still in motion.
 
 ## v1.0 gate
@@ -20,10 +20,6 @@ dev plans. This document carries only what is still in motion.
       tag; the upstream version is recorded in
       [`testdata/UPSTREAM.md`](../testdata/UPSTREAM.md). *(The golden-drift
       CI job is green on every push.)*
-- [x] Live containerd verification recorded; nested module consumable.
-      *(The verification record is
-      [`docs/containerd.md`](containerd.md); the nested module passes the
-      release-verify gate and resolves from a clean consumer.)*
 - [x] Durability: full restart-recovery suite green on 3 OSes. *(Ungated
       suite under `go test -race ./...` in the ubuntu/macos/windows CI
       matrix, green through v0.13.0.)*
@@ -55,16 +51,6 @@ dev plans. This document carries only what is still in motion.
 Revisit triggers, not commitments (carried from the archived parity plan
 §5):
 
-- **Settlement over dirty baselines & recoverable sandbox identity**
-  (proposed: [`06-settlement-recovery-upstream.md`](06-settlement-recovery-upstream.md)).
-  Two consumer-verified gaps from yaah's adoption: captures of identical
-  dirty trees never digest equal (stash commits mint per capture), so
-  `Settle(Select)` cannot pass a dirty fork baseline, and `Diff` bases on
-  the captured HEAD rather than the captured state, so a dirty baseline
-  always self-overlaps `Settle(Apply)`; and fork records carry no sandbox
-  address, so hosts must keep their own worktree registries to re-adopt
-  isolated children. Trigger: the plan is drafted — pick it up with the
-  next minor.
 - **Landlock exec-wrapper** for git-sandbox Exec (Linux): a `JailedExec`
   option on `SandboxSpec` would bring OS enforcement to the portable
   backend. Trigger: a consumer runs untrusted code without containerd.
@@ -77,15 +63,14 @@ Revisit triggers, not commitments (carried from the archived parity plan
   service is the server half of this story.)
 - **ATIF/trajectory export** of Go traces. Trigger: external eval tooling
   needs it.
-- **macOS clonefile carrier** as a third `Sandbox` backend. Trigger:
-  containerd-only-Linux proves limiting for yaah's primary platform work.
+- **macOS clonefile carrier** as an isolation `Sandbox` backend.
+  Trigger: a consumer needs isolated workspaces on macOS.
 
 ## Living documents
 
 | Document | Contents |
 |---|---|
 | `docs/law-coverage.md` | the 25 kernel laws and their Go tests — the maintenance rule lives there |
-| `docs/containerd.md` | the containerd backend: packaging, verification record, running the live suite |
 | `docs/DEVELOPMENT.md` | this document — the gate and the backlog |
 | `testdata/UPSTREAM.md` | the pinned Python reference and the re-pin procedure |
 
@@ -98,5 +83,3 @@ Revisit triggers, not commitments (carried from the archived parity plan
 3. Push the tag; the `release verify (tagged module)` CI job must pass:
    no replace directives in tagged modules, every module resolvable from
    a clean consumer.
-4. The nested `sandbox/containerd` module rides the same train when it
-   has unreleased content; its tags go at the merge that landed it.
