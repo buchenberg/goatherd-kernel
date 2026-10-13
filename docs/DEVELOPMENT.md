@@ -12,7 +12,7 @@ dev plans. This document carries only what is still in motion.
 
 ## v1.0 gate
 
-- [x] All plans 01–05 acceptance criteria checked; law-coverage map
+- [x] All plans 01–06 acceptance criteria checked; law-coverage map
       complete. *(The parity plan closed at v0.9.0 — see the CHANGELOG's
       v0.9.0 section and the archived master plan's §0 reconciliation —
       and `docs/law-coverage.md` maps all 25 laws with no accepted gaps.)*

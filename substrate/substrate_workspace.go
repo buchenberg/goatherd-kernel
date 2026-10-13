@@ -2,7 +2,7 @@ package substrate
 
 // WorkspaceSubstrate (plan 03 §3, Go-native bridge): a Substrate over a
 // sandbox.Sandbox, so recorded intents can actually reach a workspace (git or
-// containerd) through the same declare -> capture rhythm as the kernel.
+// worktree) through the same declare -> capture rhythm as the kernel.
 //
 // This substrate has no Python counterpart — it is the deliberate Go-native
 // payoff of plan 03 — so its schema vocabulary is defined here:
@@ -291,8 +291,8 @@ func (w *WorkspaceSubstrate) applyExec(ctx context.Context, record trace.Record)
 		req.Timeout = time.Duration(ms) * time.Millisecond
 	}
 	// The declared timeout is enforced here rather than delegated: a sandbox
-	// backend is only required to honor the context it is given, and the
-	// an exec-shelling backend may observe ctx without reading
+	// backend is only required to honor the context it is given, and an
+	// exec-shelling backend may observe ctx without reading
 	// sandbox.ExecRequest.Timeout.
 	// Deriving a deadline-bearing context makes the declaration mean the
 	// same thing for every backend.

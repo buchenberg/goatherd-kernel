@@ -439,7 +439,7 @@ type Sandbox interface {
 
 Backends need not implement everything. `Capabilities()` reports what is available, and unimplemented operations return `ErrUnsupported` rather than pretending to succeed. `Capture` and `Diff` are **non-mutating**: the caller's git index is left as it was found.
 
-Three backend modes ship, packaged on purpose:
+Two backend modes ship, packaged on purpose:
 
 | Backend | Mode | Lifecycle | Isolated | Containment | Package |
 |---|---|---|---|---|---|
