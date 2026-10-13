@@ -290,8 +290,8 @@ witnesses — the `substrate_ref` stamped when they were appended — never
 guessed from schemas.
 
 `WorkspaceSubstrate` bridges the kernel's `Sandbox` interface, so recorded
-file-write and exec intents reach a real workspace (git, worktree, or
-containerd) through the same declare→capture rhythm, gated on the backend's
+file-write and exec intents reach a real workspace (git or worktree)
+through the same declare→capture rhythm, gated on the backend's
 capabilities: the git backend honestly reports `clean_failure` instead of
 half-applying. Outcome honesty is the contract: `clean_failure` is claimed
 only when nothing was attempted — a failure *after* a sandbox call was made
