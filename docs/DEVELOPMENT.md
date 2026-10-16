@@ -5,6 +5,21 @@ is complete: all five workstreams shipped through `v0.13.0`, all 25 kernel
 laws are pinned, and the module is organized into its final pre-freeze
 package layout. What remains is the v1.0 gate below, then the API freeze.
 
+> **Runtime extraction.** The runtime layer (the root `shepherd` package,
+> `sandbox`, `substrate`, `materialize`, `task`, `supervisor`) now lives in
+> `github.com/buchenberg/shepherd-runtime-go`. This repository is the kernel:
+> the trace package is the module root (`import
+> "github.com/buchenberg/shepherd-kernel-go"` is package `trace`), with
+> `traceui`, `testkit`, and `cmd/traceui` alongside it. The v1.0 gate below is
+> unaffected — the freeze is of the Ring-0-adjacent kernel surface, which is
+> exactly what this module retains.
+>
+> Gate items and backlog entries that concern the runtime layer — the packaging
+> decisions (a)/(b), the restart-recovery durability suite, the sandbox
+> backends, settlement, and supervision — now track in the runtime module. Of
+> the two open gate items below, the `Sandbox`/`Supervisor` half is realized by
+> the split: they are a separate module, not part of this freeze.
+
 The completed workstreams are archived verbatim in
 [`docs/history/`](history/) — the master plan with every task ticked, the
 workstream plans 01–06, the parity comparison, and the historical gap and
@@ -44,7 +59,9 @@ dev plans. This document carries only what is still in motion.
 - [ ] Decision: API freeze of Ring-0-adjacent surface (store, canonical,
       schemas, handles) as the v1 contract; `Sandbox`/`Supervisor` remain
       explicitly extensible. *(The final gate item — after the yaah cycle
-      passes clean.)*
+      passes clean. Since the runtime extraction, `Sandbox`/`Supervisor` are a
+      separate module, so this item reduces to freezing the kernel surface this
+      module carries.)*
 
 ## Backlog
 

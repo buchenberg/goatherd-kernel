@@ -1,8 +1,8 @@
-// Package testvectors holds the shared schema of the Python-generated
+// Package testkit holds the shared schema of the Python-generated
 // execution vector fixtures. Both the trace component's tests and the
 // runtime layer's tests decode the same fixture file; keeping the schema in
 // one package prevents the two suites from drifting apart.
-package testvectors
+package testkit
 
 import (
 	"bytes"

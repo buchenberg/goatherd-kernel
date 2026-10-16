@@ -16,25 +16,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-kernel-go/internal/testvectors"
+	"github.com/buchenberg/shepherd-kernel-go/testkit"
 )
 
 type (
-	executionIDVector       = testvectors.ExecutionIDVector
-	relationIDVector        = testvectors.RelationIDVector
-	publishedFactVector     = testvectors.PublishedFactVector
-	executionVectorFact     = testvectors.ExecutionVectorFact
-	executionVectorCutoff   = testvectors.ExecutionVectorCutoff
-	executionVectorStep     = testvectors.ExecutionVectorStep
-	executionVectorRun      = testvectors.ExecutionVectorRun
-	executionVectorRelation = testvectors.ExecutionVectorRelation
-	executionVectorDoc      = testvectors.ExecutionVectorDoc
-	historyVectorChild      = testvectors.HistoryVectorChild
-	executionVectorHistory  = testvectors.ExecutionVectorHistory
+	executionIDVector       = testkit.ExecutionIDVector
+	relationIDVector        = testkit.RelationIDVector
+	publishedFactVector     = testkit.PublishedFactVector
+	executionVectorFact     = testkit.ExecutionVectorFact
+	executionVectorCutoff   = testkit.ExecutionVectorCutoff
+	executionVectorStep     = testkit.ExecutionVectorStep
+	executionVectorRun      = testkit.ExecutionVectorRun
+	executionVectorRelation = testkit.ExecutionVectorRelation
+	executionVectorDoc      = testkit.ExecutionVectorDoc
+	historyVectorChild      = testkit.HistoryVectorChild
+	executionVectorHistory  = testkit.ExecutionVectorHistory
 )
 
 func loadExecutionVectors(t *testing.T) executionVectorDoc {
-	return testvectors.LoadExecutionVectors(t, "../testdata/execution_vectors_v0.json")
+	return testkit.LoadExecutionVectors(t, "testdata/execution_vectors_v0.json")
 }
 
 func TestExecutionIDForMatchesPython(t *testing.T) {

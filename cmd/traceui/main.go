@@ -17,7 +17,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/shepherd-kernel-go/traceui"
 )
 
