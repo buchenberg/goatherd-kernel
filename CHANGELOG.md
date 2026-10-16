@@ -4,6 +4,34 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+The runtime layer is extracted to its own module,
+`github.com/buchenberg/shepherd-runtime-go` (fresh history). This module keeps
+the **kernel**: the trace record model, canonical JSON, the SQLite store, the
+effect bus, the execution/history projections, `traceui`, and `cmd/traceui`.
+
+### Added
+- **`testkit`** — the shared, public test-support package. It replaces the
+  module-private `internal/testvectors`: the vector schema (`ExecutionVectorDoc`
+  and friends) is now importable by the runtime module's tests, so the two
+  suites keep decoding the same fixtures rather than drifting apart.
+
+### Removed
+- The root `shepherd` runtime package — the scope tree, merge gate, settlement,
+  recovery, checkpoints, and workspace operations — moved to the runtime module.
+- `sandbox`, `sandbox/git`, `substrate`, `materialize`, `task`, and `supervisor`
+  moved to the runtime module.
+- `internal/gittest` and `internal/rttest` moved to the runtime module (Go
+  `internal/` packages do not cross module boundaries).
+
+### Changed
+- The trace package is promoted to the **module root**: `import
+  "github.com/buchenberg/shepherd-kernel-go"` is now package `trace` (it was
+  `github.com/buchenberg/shepherd-kernel-go/trace`). No backward compatibility
+  is kept — the old import path is gone.
+- The core module stays at go 1.21 with a single dependency (`modernc.org/sqlite`).
+
 ## [v0.16.0] - 2026-10-13
 
 The containerd sandbox backend moves out of this project, extracted with

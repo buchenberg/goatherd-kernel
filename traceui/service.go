@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/shepherd-kernel-go"
 )
 
 // maxThrough is the default ordinal cutoff: effectively none, mirroring the

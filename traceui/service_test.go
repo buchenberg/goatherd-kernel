@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/shepherd-kernel-go"
 )
 
 func newMemStore(t *testing.T) *trace.SQLiteTraceStore {

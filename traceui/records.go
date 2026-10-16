@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/shepherd-kernel-go"
 )
 
 // recordsResponse is the /api/records payload.

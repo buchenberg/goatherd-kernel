@@ -851,7 +851,7 @@ func TestAppendRequiresTrustedContext(t *testing.T) {
 }
 
 func TestGoldenVectorsFromDisk(t *testing.T) {
-	data, err := os.ReadFile("../testdata/kernel_abi_v0.json")
+	data, err := os.ReadFile("testdata/kernel_abi_v0.json")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}

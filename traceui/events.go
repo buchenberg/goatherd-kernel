@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/shepherd-kernel-go"
 )
 
 // eventDTO is the SSE wire form of trace.EffectEvent: a stable, explicitly
