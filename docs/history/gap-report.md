@@ -233,17 +233,31 @@ actually undo anything.
 > the Linux host; the rest of §15.5 (the `05 §4` durability gate, `03`) is
 > unaffected.
 >
-> The rejection it reverses is this report's "OS jails (Seatbelt/Landlock) and
-> signature grants" line (§4): enforcement now exists, but as an **integration,
-> not a fork** — per §15.5 item 5 it lives in a separate module, not the kernel.
-> It is implemented in **`shepherd-runtime-go`**: `sandbox/containment` (the
-> `Backend` contract, error taxonomy, fail-closed probe, denial classification),
-> `sandbox/confinement` (the `may=`/grant lowering and permission plan), the
-> nested `sandbox/landlock` (the syscall deny, the confine-then-exec trampoline,
-> and — ahead of the Python reference — Landlock ≥ ABI 4 network pinning),
-> `sandbox/egress` (the CONNECT broker), `GitSandbox.WithExec`, and
-> `run.Reversible`. The remaining members: **Seatbelt** (macOS,
-> `sandbox/seatbelt`) and the container tier (`croft`/containerd).
+> The rejection it reverses is **`parity-plan.md` §4** (Explicitly out of scope):
+> its *"OS jails (Seatbelt/Landlock) and signature grants"* row — the fence §15.1
+> names. Enforcement now exists, but as an **integration, not a fork** — per §15.5
+> item 5 it lives in a separate module, not the kernel. It is implemented in
+> **`shepherd-runtime-go`**: `sandbox/containment` (the `Backend` contract, error
+> taxonomy, fail-closed probe, denial classification), `sandbox/confinement` (the
+> `may=`/grant lowering and permission plan), the nested `sandbox/landlock` (the
+> syscall deny, the confine-then-exec trampoline, and — ahead of the Python
+> reference — Landlock ≥ ABI 4 network pinning), `sandbox/egress` (the CONNECT
+> broker), `GitSandbox.WithExec`, and `run.Reversible`. The remaining members:
+> **Seatbelt** (macOS, `sandbox/seatbelt`) and the container tier
+> (`croft`/containerd).
+>
+> **The §15.5 `B`-proposal elements, answered.** §15.5 requires four things of any
+> Path B proposal:
+> (a) *the Python-side story* — Python's `vcs_core` containment backends
+> (Seatbelt/Landlock) remain the reference; the Go tier is a behavioral port, not
+> a digest port;
+> (b) *a non-vector verification strategy* — below;
+> (c) *the `SandboxCapabilities.Containment` semantics* — the runtime reports
+> `ContainUncontained` (materializer) / `ContainBuffered` (isolated worktree) /
+> `ContainContained` (a live jail backend), honest per configured placement;
+> (d) *what `yaah` may then claim* — a host may claim confinement only when a jail
+> backend is available and the placement is not advisory; the component surfaces
+> that, and `yaah`'s wiring is a separate plan.
 >
 > **Verification strategy (non-vector).** Path B is *outside* the frozen
 > `shepherd.kernel.abi.v0`, so it is verified **behaviorally, not by byte-parity
