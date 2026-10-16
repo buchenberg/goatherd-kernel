@@ -117,7 +117,7 @@ divergence (documented decision) · ➖ out of scope · 🟦 Go-only strength.
 | File deltas (`FileDelta`/`FileChangeset`, diff-match-patch, zlib+b64, drift hashes) | `shepherd_contexts.simple_workspace.delta` | 🔀 **rejected**: git is the materializer (GAP-REPORT §5) | keep rejected |
 | Materialization ordering by reversibility tier (AUTO→COMPENSABLE→NONE, reverse rollback) | `_scope/_materialization.py` | 🔀 rejected (git handles FS uniformly) | keep rejected; see §5 backlog |
 | Overlay/container fork-revert (~134 ms, paper) | ContainerDevice + `OverlayEffectExtractor` (Podman, OverlayFS upper-layer walk, whiteouts); vcs-core carriers: clonefile / kernel-overlayfs / fuse / copy | `sandbox/containerd` (overlay **snapshotter** lifecycle: stop→commit→prepare→restart; implemented vs. fakes, daemon path unverified); git worktree carrier | 🔀 different mechanism, same goal; Go path viable — daemon verification **plan 05** |
-| OS-level permission enforcement (Seatbelt macOS, Landlock Linux, signature grants `May[GitRepo, ReadOnly\|ReadWrite]`, placements jail/advisory/auto) | dialect + vcs-core containment backends | ❌ (containerd namespace isolation is the only enforcement) | ➖ out of scope; §5 backlog |
+| OS-level permission enforcement (Seatbelt macOS, Landlock Linux, signature grants `May[GitRepo, ReadOnly\|ReadWrite]`, placements jail/advisory/auto) | dialect + vcs-core containment backends | `shepherd-runtime-go`: `sandbox/landlock` (Landlock syscall deny), `sandbox/confinement` (`may=`/grants/plan/placements), `sandbox/egress` (broker) | ✅ **ported in the runtime** (`shepherd-runtime-go`'s plans — *not* this document's plan numbering; Seatbelt **not yet shipped**); kernel surface unchanged — see the gap-report decision note |
 
 ### 2.5 Supervision and settlement
 
@@ -189,15 +189,17 @@ port still coherent.
 | Reversibility tiers as a typed effect hierarchy | Only pays off with the fold model; Go effects stay schema-ref-matched bus events. (Revisit trigger in §5.) |
 | Containment graduation ladder (SANDBOX→SCOPE→MATERIALIZED→ESCAPED) | Go encodes containment per-witness/per-sandbox-capability instead; the ladder is v1-runtime plumbing. |
 | vcs-core (world values, `refs/vcscore/*`, carriers, sessions/daemon, fsck) | A second product; the Go `Sandbox` interface + worktree/containerd backends cover the fork/revert use case at a fraction of the surface. |
-| OS jails (Seatbelt/Landlock) and signature grants | Enforcement belongs where processes are spawned; containerd backend provides the Linux enforcement story. Backlog item below. |
+| OS jails (Seatbelt/Landlock) and signature grants | **Revised (2026-10-16):** ported as an *integration* in `shepherd-runtime-go` (`sandbox/landlock`, `sandbox/confinement`, `sandbox/egress`), **not** in the kernel — see the gap-report decision note and `00-execution-plan.md` §15.5 item 5. |
 | Providers, CLI, docs site, extras, packaging | Go port is a library; yaah hosts the loops and tooling. |
 | skeleton `Session` custody/seal-handoff machinery | Depends on vcs-core; plan 04 keeps only the settlement state machine. |
 
 ## 5. Backlog (revisit triggers, not commitments)
 
-- **Landlock exec-wrapper** for git-sandbox Exec (Linux): a `JailedExec` option
+- ~~**Landlock exec-wrapper** for git-sandbox Exec (Linux): a `JailedExec` option
   on `SandboxSpec` would bring OS enforcement to the portable backend. Trigger:
-  a consumer runs untrusted code without containerd.
+  a consumer runs untrusted code without containerd.~~ **Resolved (2026-10-16)** —
+  shipped in `shepherd-runtime-go` (`sandbox/landlock` + `GitSandbox.WithExec`),
+  not the kernel; see the gap-report decision note.
 - **Reversibility metadata on schema refs** (cheap subset of tiers: a registry
   mapping schema → AUTO/COMPENSABLE/NONE used to order plan-04 settlement and
   flag irreversible captures). Trigger: plan 03 substrates expose >1 backend
