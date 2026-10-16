@@ -71,6 +71,10 @@ Revisit triggers, not commitments (carried from the archived parity plan
 - **Landlock exec-wrapper** for git-sandbox Exec (Linux): a `JailedExec`
   option on `SandboxSpec` would bring OS enforcement to the portable
   backend. Trigger: a consumer runs untrusted code without containerd.
+  *(**Resolved** — shipped in `shepherd-runtime-go`, not the kernel: the
+  `sandbox/landlock` backend with `sandbox/containment`/`sandbox/confinement`
+  and `GitSandbox.WithExec`; the "Path B" fence decision is recorded in
+  [`gap-report.md`](history/gap-report.md). macOS Seatbelt remains.)*
 - **Reversibility metadata on schema refs** (a registry mapping schema →
   AUTO/COMPENSABLE/NONE, used to order settlement and flag irreversible
   captures). Trigger: substrates expose more than one backend class with

@@ -224,6 +224,25 @@ deliberate simplification, but it means discard() is purely
 semantics — it marks the scope as discarded in the trace but doesn't
 actually undo anything.
 
+> **Decision — the "Path B" fence, Linux Landlock member (written record).**
+> `00-execution-plan.md` §15.2 fenced OS-level enforcement ("Path B") and required
+> a written decision before any of it was ported. This is that decision, scoped to
+> the Linux host member.
+>
+> OS-level containment is **not a kernel concern**: the kernel is a trace store,
+> not a process spawner. It is implemented in the **`shepherd-runtime-go`** module
+> as a self-contained component — `sandbox/containment` (the `Backend` contract,
+> error taxonomy, fail-closed probe, denial classification), `sandbox/confinement`
+> (the `may=`/grant authority lowering and permission plan), and the nested
+> `sandbox/landlock` module (the Landlock syscall deny, the confine-then-exec
+> trampoline, and — ahead of the Python reference — Landlock ≥ ABI 4 network
+> pinning). `GitSandbox` gains confined `Exec` via `WithExec`, and `run.Reversible`
+> wraps execution in a reversible transaction.
+>
+> The remaining members: **Seatbelt** (macOS, `sandbox/seatbelt`) and the
+> container tier (`croft`/containerd). **The kernel surface is unchanged by this
+> decision.**
+
 ---
 
 ### 4. Checkpoint System — ~~❌ MISSING~~ → ✅ IMPLEMENTED
