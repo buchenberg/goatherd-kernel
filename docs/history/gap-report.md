@@ -225,23 +225,36 @@ semantics — it marks the scope as discarded in the trace but doesn't
 actually undo anything.
 
 > **Decision — the "Path B" fence, Linux Landlock member (written record).**
-> `00-execution-plan.md` §15.2 fenced OS-level enforcement ("Path B") and required
-> a written decision before any of it was ported. This is that decision, scoped to
-> the Linux host member.
+> `00-execution-plan.md` **§15.1** (the fence) requires *"a written decision note
+> reversing a GAP-REPORT rejection"* before OS-level enforcement is touched, and
+> **§15.5** decided Path A with the fence standing (*"no syscall jails … no
+> `may=`-style grant vocabulary in Go"*). **This note is that reversal for the
+> Linux Landlock member, and it amends §15.5 item 1 for that member** — scoped to
+> the Linux host; the rest of §15.5 (the `05 §4` durability gate, `03`) is
+> unaffected.
 >
-> OS-level containment is **not a kernel concern**: the kernel is a trace store,
-> not a process spawner. It is implemented in the **`shepherd-runtime-go`** module
-> as a self-contained component — `sandbox/containment` (the `Backend` contract,
-> error taxonomy, fail-closed probe, denial classification), `sandbox/confinement`
-> (the `may=`/grant authority lowering and permission plan), and the nested
-> `sandbox/landlock` module (the Landlock syscall deny, the confine-then-exec
-> trampoline, and — ahead of the Python reference — Landlock ≥ ABI 4 network
-> pinning). `GitSandbox` gains confined `Exec` via `WithExec`, and `run.Reversible`
-> wraps execution in a reversible transaction.
+> The rejection it reverses is this report's "OS jails (Seatbelt/Landlock) and
+> signature grants" line (§4): enforcement now exists, but as an **integration,
+> not a fork** — per §15.5 item 5 it lives in a separate module, not the kernel.
+> It is implemented in **`shepherd-runtime-go`**: `sandbox/containment` (the
+> `Backend` contract, error taxonomy, fail-closed probe, denial classification),
+> `sandbox/confinement` (the `may=`/grant lowering and permission plan), the
+> nested `sandbox/landlock` (the syscall deny, the confine-then-exec trampoline,
+> and — ahead of the Python reference — Landlock ≥ ABI 4 network pinning),
+> `sandbox/egress` (the CONNECT broker), `GitSandbox.WithExec`, and
+> `run.Reversible`. The remaining members: **Seatbelt** (macOS,
+> `sandbox/seatbelt`) and the container tier (`croft`/containerd).
 >
-> The remaining members: **Seatbelt** (macOS, `sandbox/seatbelt`) and the
-> container tier (`croft`/containerd). **The kernel surface is unchanged by this
-> decision.**
+> **Verification strategy (non-vector).** Path B is *outside* the frozen
+> `shepherd.kernel.abi.v0`, so it is verified **behaviorally, not by byte-parity
+> digest vectors**: kernel-verified Landlock tests (denial, read-only,
+> per-binding deny-closed, the exit-code-aware fail-closed probe, network
+> `deny_all`/pinned) plus a full-stack reversible-run + broker-pin test. No golden
+> digest vectors are claimed for it. This keeps §15.5 item 4 (documentation must
+> not overclaim) intact.
+>
+> **The kernel surface is unchanged by this decision** — no Ring 0/1 change and no
+> new kernel record schema.
 
 ---
 
