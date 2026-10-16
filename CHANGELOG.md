@@ -4,7 +4,7 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.17.0] - 2026-10-15
 
 The runtime layer is extracted to its own module,
 `github.com/buchenberg/shepherd-runtime-go` (fresh history). This module keeps
