@@ -79,6 +79,17 @@ Revisit triggers, not commitments (carried from the archived parity plan
   [`gap-report.md`](history/gap-report.md); the archived
   [`parity-plan.md`](history/parity-plan.md) §2.4/§4/§5 rows are annotated to
   match. macOS Seatbelt and the container-tier carriers remain.)*
+- **Windows OS-level enforcement.** The Linux member above has no Windows
+  counterpart: Windows has no unprivileged, per-process, path-scoped "deny
+  writes below X" primitive, so there was nothing to port.
+  *(**Resolved** — shipped in `shepherd-runtime-go`, not the kernel:
+  `sandbox/winacl`, a native Windows tier (write-restricted token, per-root
+  capability SIDs, a Low integrity level, a mandatory label), implementing the
+  same `containment.Backend` contract and reaching the git backend through the
+  same opt-in `WithExec`. It is unprivileged: no container, no hypervisor, no
+  elevation. The written decision reversing the GAP-REPORT rejection — and
+  amending `00-execution-plan.md` §15.5 item 1 for this member too — is
+  recorded in [`gap-report.md`](history/gap-report.md).)*
 - **Reversibility metadata on schema refs** (a registry mapping schema →
   AUTO/COMPENSABLE/NONE, used to order settlement and flag irreversible
   captures). Trigger: substrates expose more than one backend class with

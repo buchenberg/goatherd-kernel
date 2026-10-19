@@ -241,10 +241,12 @@ actually undo anything.
 > taxonomy, fail-closed probe, denial classification), `sandbox/confinement` (the
 > `may=`/grant lowering and permission plan), the nested `sandbox/landlock` (the
 > syscall deny, the confine-then-exec trampoline, and — ahead of the Python
-> reference — Landlock ≥ ABI 4 network pinning), `sandbox/egress` (the CONNECT
-> broker), `GitSandbox.WithExec`, and `run.Reversible`. The remaining members:
-> **Seatbelt** (macOS, `sandbox/seatbelt`) and the container tier
-> (`croft`/containerd).
+> reference — Landlock ≥ ABI 4 network pinning), the nested `sandbox/winacl`
+> (the Windows member: a write-restricted token, per-root capability SIDs, a
+> Low integrity level, and a mandatory label — unprivileged, no container),
+> `sandbox/egress` (the CONNECT broker), `GitSandbox.WithExec`, and
+> `run.Reversible`. The remaining members: **Seatbelt** (macOS,
+> `sandbox/seatbelt`) and the container tier (`croft`/containerd).
 >
 > **The §15.5 `B`-proposal elements, answered.** §15.5 requires four things of any
 > Path B proposal:
@@ -269,6 +271,45 @@ actually undo anything.
 >
 > **The kernel surface is unchanged by this decision** — no Ring 0/1 change and no
 > new kernel record schema.
+
+> **Decision — the "Path B" fence, Windows member (written record).**
+> A sibling of the Linux Landlock note above, for the Windows member, and it
+> amends that note's **§15.5 item 1** amendment for the Windows host too. The
+> same rejection is reversed for this member: enforcement now exists for
+> Windows, as an **integration, not a fork**, in **`shepherd-runtime-go`**'s
+> nested `sandbox/winacl`.
+>
+> Windows has no unprivileged, per-process, path-scoped "deny writes below X"
+> primitive — Landlock is a kernel LSM and there is no equivalent — so the
+> member is not a port of the Python reference but a **new member of the same
+> family**, implementing the same `containment.Backend` contract (resolve →
+> profile → probe fail-closed → launch) and reaching the git backend through
+> the same opt-in `WithExec`. Its mechanism is four kernel-enforced layers: a
+> write-restricted token (`CreateRestrictedToken` + `WRITE_RESTRICTED`), per
+> root write capability SIDs, a Low integrity level with a Low no-write-up
+> mandatory label, and an ambient-delete deny. It is **unprivileged** — a
+> restricted version of the caller's own primary token needs no
+> `SE_ASSIGNPRIMARYTOKEN_NAME` privilege — so it needs no container, no
+> hypervisor, and no elevation.
+>
+> **Two boundaries it does not close, stated rather than assumed.** The
+> mechanism has no egress control, so only `allow_all` is representable and
+> `deny_all`/`broker` are **refused** rather than silently ignored. And the
+> write restriction does not close the `Everyone` path: `Everyone` must be in
+> the restricting list for a CNG-using body to start, so a directory that
+> grants write to `Everyone` *and* carries a Low integrity label is writable
+> by a confined child even when it is not a granted root. Both are pinned by
+> the runtime's own tests.
+>
+> **The §15.5 `B`-proposal elements are answered as in the Linux note**, with
+> one difference: the Windows member has no Python counterpart to be a
+> behavioral port *of*, so it is a **family extension** rather than a port —
+> which is why the reference for its contract is the runtime's own Linux member
+> (`sandbox/landlock`), not a Python file. Verification is behavioral, not
+> byte-parity, for the same reason as the Linux note.
+>
+> **The kernel surface is unchanged by this decision** — no Ring 0/1 change and
+> no new kernel record schema.
 
 ---
 
@@ -421,7 +462,11 @@ filesystem (not containers), the realistic path is:
 - Pros: 134ms fork/revert, handles all filesystem changes including
   side effects from compiled binaries
 - Cons: Requires Linux, root or user namespaces, significant
-  infrastructure. Not viable on Windows (yaah's primary platform).
+  infrastructure. Not viable on Windows (yaah's primary platform) — but
+  Windows is not left without an answer: the runtime ships a **native**
+  Windows tier (`shepherd-runtime-go/sandbox/winacl`), a write-restricted
+  token with per-root capability SIDs, a Low integrity level, and a mandatory
+  label, which confines writes to a granted root without a container.
 
 ---
 
