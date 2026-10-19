@@ -371,7 +371,11 @@ filesystem (not containers), the realistic path is:
 - Pros: 134ms fork/revert, handles all filesystem changes including
   side effects from compiled binaries
 - Cons: Requires Linux, root or user namespaces, significant
-  infrastructure. Not viable on Windows (yaah's primary platform).
+  infrastructure. Not viable on Windows (yaah's primary platform) — but
+  Windows is not left without an answer: the runtime ships a **native**
+  Windows tier (`shepherd-runtime-go/sandbox/winacl`), a write-restricted
+  token with per-root capability SIDs, a Low integrity level, and a mandatory
+  label, which confines writes to a granted root without a container.
 
 ---
 

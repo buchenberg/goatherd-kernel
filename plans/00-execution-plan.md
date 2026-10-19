@@ -601,7 +601,16 @@ policy, secret injection. In the Python reference this is `shepherd`'s
 `vcs-core`: `_seatbelt_containment.py`, `_landlock_containment.py`,
 `_containment.py`, `_egress_broker.py`, `_execution_capability.py`, with a
 three-part conformance probe and `UnsupportedMayProfileError` refusing rather
-than weakening. **None of it is ported, and R6 says it must not be by accident.**
+than weakening. **The kernel ports none of it, and R6 says it must not be by
+accident — but the runtime does, behind this kernel's `Sandbox` interface.**
+The Linux member shipped as `shepherd-runtime-go/sandbox/landlock` and the
+Windows member as `sandbox/winacl`, both implementing the same
+`containment.Backend` contract (resolve → profile → probe → launch, fail-closed
+at the probe) and both injected into the git backend through its opt-in
+`WithExec`. The written decisions are the runtime's
+`docs/plans/01-landlock-containment.md` and `08-windows-containment.md`; the
+kernel's own scope is unchanged, and the container tier remains the Linux
+container story.
 
 The distinction is not academic. The kernel's own docs concede it:
 `sandboxWorkspace.ResolvePath` notes containment is *lexical* (`path.Clean`), so
