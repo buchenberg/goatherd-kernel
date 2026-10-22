@@ -34,7 +34,7 @@ because `internal/` has no published doc page.
 ## Target layout
 
 ```
-shepherd-kernel-go/
+goatherd-kernel/
 ├── (root, package shepherd)   composition layer: Scope, ScopeManager,
 │                              Checkpoint, handles (Registry, StartTaskSync,
 │                              TaskControl, ChildHandle, Run), settlement
@@ -167,7 +167,7 @@ CHANGELOG `v0.11.0` section including the migration table below.
 
 **S7 — Containerd module.** In `sandbox/containerd`: update the nine files
 importing the core root package to the new paths, repin
-`go.mod` to `shepherd-kernel-go v0.11.0` (via `replace` while v0.11.0 is
+`go.mod` to `goatherd-kernel v0.11.0` (via `replace` while v0.11.0 is
 unreleased, direct require after tagging), run its fake-based suite. Its
 version notes join the same CHANGELOG entry.
 

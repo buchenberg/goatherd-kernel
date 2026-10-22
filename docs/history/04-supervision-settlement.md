@@ -233,5 +233,5 @@ the reference scenarios consumers will ask for):
 - [x] Tag `v0.8.0` at the merge commit and verify it resolves from a clean
       module; tick this box in the follow-up docs commit.
       *(Done 2026-10-10: PR #27 merged at `3c4bda1`, `v0.8.0` tagged there,
-      `go get github.com/buchenberg/shepherd-kernel-go@v0.8.0` resolves from
+      `go get github.com/buchenberg/goatherd-kernel@v0.8.0` resolves from
       a clean module.)*

@@ -17,8 +17,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-kernel-go/traceui"
+	"github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-kernel/traceui"
 )
 
 func main() {

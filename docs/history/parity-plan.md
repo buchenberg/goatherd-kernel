@@ -1,4 +1,4 @@
-# Shepherd ↔ shepherd-kernel-go Parity Plan
+# Shepherd ↔ goatherd-kernel Parity Plan
 
 > **Archived.** This plan is complete; its status is frozen. The living
 > plan — the v1.0 gate and the backlog — is [`docs/DEVELOPMENT.md`](../DEVELOPMENT.md).

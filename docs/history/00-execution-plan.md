@@ -5,7 +5,7 @@
 
 
 **Date**: 2026-09-16 · **Owner**: buchenberg · **Status**: proposed
-**Scope**: shepherd-kernel-go (`github.com/buchenberg/shepherd-kernel-go`, main @ `a07ead4` = v0.3.2; `feat/containerd` @ `48b16fb` = untagged v0.4.0-content)
+**Scope**: goatherd-kernel (`github.com/buchenberg/goatherd-kernel`, main @ `a07ead4` = v0.3.2; `feat/containerd` @ `48b16fb` = untagged v0.4.0-content)
 **Reference**: Python `shepherd` monorepo (`shepherd-workspace` 0.3.1, `shepherd2` 0.1.0a0, main @ `d34d5ca3`)
 
 This is the **execution** document: task-level breakdown, sequencing,
@@ -110,8 +110,8 @@ nested tags are now **published at fixed content**, verified from a clean module
 context:
 
 ```
-github.com/buchenberg/shepherd-kernel-go                     v0.4.1
-github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.2
+github.com/buchenberg/goatherd-kernel                     v0.4.1
+github.com/buchenberg/goatherd-kernel/sandbox/containerd  v0.1.2
 ```
 
 **One caveat worth remembering:** the tags are only as good as the check that they
@@ -135,11 +135,11 @@ through the proxy and recorded in `sum.golang.org` — so it took a new version:
 Verified end-to-end from a clean module, not inferred from the tag list:
 
 ```
-$ go get github.com/buchenberg/shepherd-kernel-go/sandbox/containerd@v0.1.2
-go: added github.com/buchenberg/shepherd-kernel-go v0.4.1
+$ go get github.com/buchenberg/goatherd-kernel/sandbox/containerd@v0.1.2
+go: added github.com/buchenberg/goatherd-kernel v0.4.1
 $ go list -m all | grep shepherd
-github.com/buchenberg/shepherd-kernel-go                    v0.4.1
-github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.2
+github.com/buchenberg/goatherd-kernel                    v0.4.1
+github.com/buchenberg/goatherd-kernel/sandbox/containerd  v0.1.2
 ```
 
 The core release was never affected: `v0.4.1` is correct and contains the bug
@@ -342,7 +342,7 @@ Linux spot-check (WSL/CI).
 | T0.7 | CI bootstrap (`ci.yml`): matrix `ubuntu/windows/macos` × `go test ./... -count=1 -race` (core); linux-only job builds+tests nested module; `go vet`; `gofmt -l` fail-on-output | `.github/workflows/ci.yml` | 0.5d | T0.1 |
 
 **Exit criteria / acceptance** (annotated 2026-10-05 — see §0):
-- [x] `go get github.com/buchenberg/shepherd-kernel-go@v0.4.0` resolves and
+- [x] `go get github.com/buchenberg/goatherd-kernel@v0.4.0` resolves and
       builds; nested module resolvable without `replace`.
       *(Verified: `sandbox/containerd/go.mod` has no `replace` and requires
       tagged `v0.4.0`. Note the tag predates the bug batch — §0.)*
@@ -427,7 +427,7 @@ change).
 - [x] `-race` green on the 3-OS CI matrix (PRs #12–#18), and the golden-drift gate is active.
 - [x] CHANGELOG flags the digest-behavior fix — the Breaking section leads with the digest-behavior change, the duplicate-parent rejection and the witness-body validation, plus the yaah consumer note.
 - [x] `v0.5.0` tagged.
-      *(Done: annotated tag `v0.5.0` at `fb1c2a9` (the release merge), pushed after verifying `git merge-base --is-ancestor 0bf34f8 v0.5.0` — the last fix is in the tagged history — and confirmed `go get github.com/buchenberg/shepherd-kernel-go@v0.5.0` resolves from a clean module.)*
+      *(Done: annotated tag `v0.5.0` at `fb1c2a9` (the release merge), pushed after verifying `git merge-base --is-ancestor 0bf34f8 v0.5.0` — the last fix is in the tagged history — and confirmed `go get github.com/buchenberg/goatherd-kernel@v0.5.0` resolves from a clean module.)*
 **yaah coordination**: after v0.5.0, traces written by yaah on ≥v0.5.0 are
 cross-readable with Python; traces written by older Go versions with
 edge-case payloads are **not** digest-compatible — note in yaah release notes.
@@ -485,10 +485,10 @@ merge) and the T0.8b end-to-end check passes — verified from a clean
 module, not inferred from the tag list:
 
 ```
-$ go get github.com/buchenberg/shepherd-kernel-go/sandbox/containerd@v0.1.3
+$ go get github.com/buchenberg/goatherd-kernel/sandbox/containerd@v0.1.3
 $ go list -m all | grep shepherd
-github.com/buchenberg/shepherd-kernel-go                     v0.7.0
-github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.3
+github.com/buchenberg/goatherd-kernel                     v0.7.0
+github.com/buchenberg/goatherd-kernel/sandbox/containerd  v0.1.3
 ```
 
 ---
@@ -635,7 +635,7 @@ v0.9.0 tagged; yaah pinned and compiling against ctx APIs.
       dependencies and is the test carrier, so nesting would buy nothing
       and cost the T0.8b repin dance).
       *(Executed: the backend lives at `sandbox/git`
-      (`github.com/buchenberg/shepherd-kernel-go/sandbox/git`), still
+      (`github.com/buchenberg/goatherd-kernel/sandbox/git`), still
       self-registering as "git" on import; `sandbox` keeps the contract
       and the registry. The registry mechanics tests stayed in `sandbox`;
       the backend's OpenSandbox integration moved with it.)*

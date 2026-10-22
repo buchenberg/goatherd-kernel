@@ -1,4 +1,4 @@
-module github.com/buchenberg/shepherd-kernel-go
+module github.com/buchenberg/goatherd-kernel
 
 go 1.21
 

@@ -12,7 +12,7 @@
 
 ## Executive Summary
 
-The Go port (`shepherd-kernel-go`) implements the trace kernel, effect bus,
+The Go port (`goatherd-kernel`) implements the trace kernel, effect bus,
 scope lifecycle, supervision rule engine, and — since v0.4.0 — the checkpoint
 and materialization mechanisms that real rollback depends on.
 

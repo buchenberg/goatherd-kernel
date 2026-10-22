@@ -1,8 +1,8 @@
-# shepherd-kernel-go
+# goatherd-kernel
 
 Go implementation of the [Shepherd](https://arxiv.org/abs/2605.10913) trace kernel: a content-addressed, append-only, causally-linked execution trace store over SQLite, the real-time effect bus, and the read-only trace UI. It implements `shepherd.kernel.abi.v0` — the same frozen ABI as the Python reference (`shepherd2`) — and produces byte-identical digests from the same golden test vectors.
 
-> **Module scope.** This module is the **kernel**: the record model, canonical JSON, the SQLite store, the effect bus, and the execution/history projections. The trace package is the **module root** — `import "github.com/buchenberg/shepherd-kernel-go"` is package `trace` — with `traceui` (the read-only HTTP projection) and `testkit` (shared test support) as subpackages.
+> **Module scope.** This module is the **kernel**: the record model, canonical JSON, the SQLite store, the effect bus, and the execution/history projections. The trace package is the **module root** — `import "github.com/buchenberg/goatherd-kernel"` is package `trace` — with `traceui` (the read-only HTTP projection) and `testkit` (shared test support) as subpackages.
 >
 > The **runtime layer** — the scope tree, merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine — lives in [`github.com/buchenberg/shepherd-runtime-go`](https://github.com/buchenberg/shepherd-runtime-go), which composes this module. See that README for branching, workspace capture/restore, supervision, and task execution.
 
@@ -15,7 +15,7 @@ Branching, workspace capture/restore, and supervision are built *on top of* the 
 ## Install
 
 ```bash
-go get github.com/buchenberg/shepherd-kernel-go
+go get github.com/buchenberg/goatherd-kernel
 ```
 
 ## What You Can Do With It

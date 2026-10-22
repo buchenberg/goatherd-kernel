@@ -116,5 +116,5 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           ( cd "$(mktemp -d)" && go mod init verify >/dev/null && \
-            go get "github.com/buchenberg/shepherd-kernel-go@${tag}" )
+            go get "github.com/buchenberg/goatherd-kernel@${tag}" )
           echo "tag ${GITHUB_REF_NAME} resolves end-to-end from a clean module context"

@@ -19,7 +19,7 @@ Findings from the inventory (2026-09-16):
 - `main` is at `a07ead4` = tag **v0.3.2**. All v0.4.0 content
   (backend-neutral `Sandbox`, `WorkspaceState`, containerd backend) lives only
   on `feat/containerd` (`48b16fb`), **untagged**. `go get
-  github.com/buchenberg/shepherd-kernel-go` fetches ≤ v0.3.2 — i.e. the old
+  github.com/buchenberg/goatherd-kernel` fetches ≤ v0.3.2 — i.e. the old
   `TreeState` API that GAP-REPORT calls superseded.
 - `GAP-REPORT.md` and `sandbox/containerd/go.mod` both reference **v0.4.0**,
   which does not exist as a tag.
