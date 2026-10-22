@@ -4,6 +4,18 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.18.0] - 2026-10-22
+
+The module is renamed: `github.com/buchenberg/shepherd-kernel-go` is now
+`github.com/buchenberg/goatherd-kernel` (the GitHub repo was renamed to match;
+old URLs redirect). Update import paths:
+
+    import "github.com/buchenberg/goatherd-kernel" // package `trace` (unchanged)
+
+Nothing else changes: the frozen ABI (`shepherd.kernel.abi.v0`), the
+`shepherd2.*` schema vocabulary, the golden vectors, and the Python-reference
+anchors are byte-identical to v0.17.0.
+
 ## [v0.17.0] - 2026-10-15
 
 The runtime layer is extracted to its own module,
