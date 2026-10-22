@@ -1,6 +1,6 @@
 # Development Plan
 
-The living plan for `shepherd-kernel-go`. The port of the Python reference
+The living plan for `goatherd-kernel`. The port of the Python reference
 is complete: all five workstreams shipped through `v0.13.0`, all 25 kernel
 laws are pinned, and the module is organized into its final pre-freeze
 package layout. What remains is the v1.0 gate below, then the API freeze.
@@ -9,7 +9,7 @@ package layout. What remains is the v1.0 gate below, then the API freeze.
 > `sandbox`, `substrate`, `materialize`, `task`, `supervisor`) now lives in
 > `github.com/buchenberg/shepherd-runtime-go`. This repository is the kernel:
 > the trace package is the module root (`import
-> "github.com/buchenberg/shepherd-kernel-go"` is package `trace`), with
+> "github.com/buchenberg/goatherd-kernel"` is package `trace`), with
 > `traceui`, `testkit`, and `cmd/traceui` alongside it. The v1.0 gate below is
 > unaffected — the freeze is of the Ring-0-adjacent kernel surface, which is
 > exactly what this module retains.

@@ -1,5 +1,5 @@
 # Binaries
-/shepherd-kernel-go
+/goatherd-kernel
 
 # Test binary
 *.test

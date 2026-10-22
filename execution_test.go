@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-kernel-go/testkit"
+	"github.com/buchenberg/goatherd-kernel/testkit"
 )
 
 type (

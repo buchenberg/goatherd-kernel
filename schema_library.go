@@ -56,7 +56,7 @@ func (l *StaticSchemaLibrary) ProjectionSpecs() []ProjectionSpec { return l.Spec
 // projection's declared requirement. Python raises ProjectionModeError (a
 // ValueError subclass); Go has no error hierarchy here, so the sentinel is
 // matched with errors.Is.
-var ErrProjectionMode = errors.New("shepherd: projection mode incompatible")
+var ErrProjectionMode = errors.New("goatherd: projection mode incompatible")
 
 // ShepherdSchemas is the default schema library. It registers the
 // execution and relation rings WITH their projection specs, plus the

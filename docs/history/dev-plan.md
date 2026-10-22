@@ -19,16 +19,16 @@
 > snapshots, build on what exists) still hold and carried into the refactor. The
 > code snippets throughout this document are historical and will not compile.
 
-**Project**: shepherd-kernel-go
-**Goal**: Enable "subagent makes a change, supervisor rolls it back and restarts from an earlier point" — entirely within shepherd-kernel-go, no yaah changes required.
+**Project**: goatherd-kernel
+**Goal**: Enable "subagent makes a change, supervisor rolls it back and restarts from an earlier point" — entirely within goatherd-kernel, no yaah changes required.
 
 ---
 
 ## Design Principles
 
-1. **shepherd-kernel-go stays a pure library** — no yaah imports, no agent loop knowledge
+1. **goatherd-kernel stays a pure library** — no yaah imports, no agent loop knowledge
 2. **Git is the materializer** — no custom FileDelta/changeset/overlay code. `git add -A && git stash create` captures state; `git reset --hard + git clean -fd + git stash apply` restores it.
-3. **Opaque snapshots** — the caller (yaah, later) passes conversation state as `[]byte`. shepherd-kernel-go stores it, returns it on restore, never inspects it.
+3. **Opaque snapshots** — the caller (yaah, later) passes conversation state as `[]byte`. goatherd-kernel stores it, returns it on restore, never inspects it.
 4. **Same test patterns as existing code** — `newMemStore(t)`, trace verification via `ReadOwnerPrefix`, table-driven tests.
 5. **Build on what exists** — add methods to `Scope` and `Supervisor`, don't restructure.
 
@@ -604,7 +604,7 @@ func (m *ScopeManager) LatestCheckpoint(scopeID string) *GitCheckpoint {
 
 **File**: `integration_test.go` (~150 lines)
 
-This test exercises the full rollback flow end-to-end within shepherd-kernel-go, simulating what yaah would do:
+This test exercises the full rollback flow end-to-end within goatherd-kernel, simulating what yaah would do:
 
 ```go
 // integration_test.go
@@ -733,7 +733,7 @@ Phase 4: integration_test.go
 ### What this does NOT implement (deferred to yaah integration)
 
 - **Pre-tool hook** — The `CheckCall` method exists, but wiring it into yaah's tool dispatch path is a yaah change (~5 lines).
-- **Conversation snapshot marshaling** — shepherd-kernel-go takes `[]byte`. yaah marshals `[]types.Message` to JSON. That's a yaah change.
+- **Conversation snapshot marshaling** — goatherd-kernel takes `[]byte`. yaah marshals `[]types.Message` to JSON. That's a yaah change.
 - **Sub-agent restart loop** — The "restart from checkpoint" orchestration logic. yaah change.
 
 ### Why not port Python's reversibility tiers
