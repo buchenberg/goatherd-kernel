@@ -128,51 +128,6 @@ func (s *SQLiteTraceStore) validateWitnessChain(gctx context.Context, startRef s
 	}
 }
 
-func (s *SQLiteTraceStore) insertWitnessRecordIfMissing(gctx context.Context, plan witnessPlan, appendIntentID string) error {
-	if s.factExists(gctx, plan.recordID) {
-		existing, err := s.readFact(gctx, plan.recordID)
-		if err != nil {
-			return err
-		}
-		if !witnessFactMatchesPlan(existing, plan) {
-			return &TraceStoreError{fmt.Sprintf("witness record id %q already names a different witness", plan.recordID)}
-		}
-		return nil
-	}
-
-	ordinal, err := s.nextOwnerOrdinal(gctx, witnessTraceOwnerID)
-	if err != nil {
-		return err
-	}
-
-	fact := Record{
-		Envelope: RecordEnvelope{
-			RecordID:   plan.recordID,
-			Digest:     plan.recordID,
-			SchemaRef:  plan.schemaRef,
-			Mode:       Capture,
-			WitnessRef: plan.witnessRef,
-		},
-		Body: RecordBody{Payload: CopyMap(plan.body)},
-		View: &RecordView{
-			TraceOwnerID: witnessTraceOwnerID,
-			OwnerOrdinal: ordinal,
-			KindLabel:    plan.kindLabel,
-		},
-	}
-
-	if err := s.insertFactRow(gctx, fact, fmt.Sprintf("witness:%s", plan.recordID), appendIntentID); err != nil {
-		return err
-	}
-
-	_, err = s.db.ExecContext(gctx,
-		`INSERT INTO owner_ordinals(trace_owner_id, next_ordinal) VALUES (?, ?)
-		 ON CONFLICT(trace_owner_id) DO UPDATE SET next_ordinal = excluded.next_ordinal`,
-		witnessTraceOwnerID, ordinal+1,
-	)
-	return err
-}
-
 // ordinaryWitnessPlan builds the witness a group's records cite.
 //
 // authority_refs comes from the *retained context's* capability_witness_refs, not

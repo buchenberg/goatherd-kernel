@@ -30,7 +30,7 @@ func (s *SQLiteTraceStore) PublishFrontier(ctx context.Context, auth AppendConte
 		return Frontier{}, fmt.Errorf("begin transaction: %w", err)
 	}
 
-	frontier, err := s.publishFrontierInTx(tx, opCtx, spec)
+	frontier, batch, receipt, isNew, err := s.publishFrontierInTx(tx, opCtx, spec)
 	if err != nil {
 		tx.Rollback()
 		return Frontier{}, err
@@ -39,6 +39,14 @@ func (s *SQLiteTraceStore) PublishFrontier(ctx context.Context, auth AppendConte
 	if err := tx.Commit(); err != nil {
 		return Frontier{}, fmt.Errorf("commit: %w", err)
 	}
+
+	// The frontier fact is a retained record like any other, so publish it to
+	// the bus the way Append publishes its records — after commit, and only
+	// when records were actually written, not on an idempotent replay.
+	if isNew {
+		s.publishAppendEvents(batch, receipt)
+	}
+
 	return frontier, nil
 }
 
@@ -104,17 +112,21 @@ func (s *SQLiteTraceStore) ReadOwnerCutoff(ctx context.Context, frontierID strin
 	return s.readOwnerCutoff(ctx, frontierID)
 }
 
-func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext, spec FrontierSpec) (Frontier, error) {
+// publishFrontierInTx appends the frontier fact and registers the frontier
+// row. Alongside the frontier it returns the batch and receipt the append
+// produced and whether any records were newly written, so PublishFrontier
+// can publish bus events after commit the way Append does.
+func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext, spec FrontierSpec) (Frontier, AppendBatch, AppendReceipt, bool, error) {
 	if spec.FrontierID == "" {
-		return Frontier{}, fmt.Errorf("frontier_id is required")
+		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, fmt.Errorf("frontier_id is required")
 	}
 
 	through, err := s.readLatestFactOnPathTx(tx, spec.ThroughFactID, spec.TargetTraceOwnerID)
 	if err != nil {
-		return Frontier{}, err
+		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, err
 	}
 	if through.View == nil || through.View.TraceOwnerID != spec.TargetTraceOwnerID {
-		return Frontier{}, &TraceStoreError{"owner cutoff target disagrees with through fact owner"}
+		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, &TraceStoreError{"owner cutoff target disagrees with through fact owner"}
 	}
 
 	publisher := spec.PublisherOwnerID
@@ -165,9 +177,9 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 		}},
 	}
 
-	receipt, _, err := s.appendInTx(tx, ctx, batch)
+	receipt, isNew, err := s.appendInTx(tx, ctx, batch)
 	if err != nil {
-		return Frontier{}, err
+		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, err
 	}
 
 	createdByFactID := receipt.FactIDs[0]
@@ -187,9 +199,9 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 			existingFrontier.TargetTraceOwnerID != frontier.TargetTraceOwnerID ||
 			existingFrontier.ThroughFactID != frontier.ThroughFactID ||
 			existingFrontier.ThroughOwnerOrdinal != frontier.ThroughOwnerOrdinal {
-			return Frontier{}, &TraceStoreError{fmt.Sprintf("frontier id %q already names a different cutoff", spec.FrontierID)}
+			return Frontier{}, AppendBatch{}, AppendReceipt{}, false, &TraceStoreError{fmt.Sprintf("frontier id %q already names a different cutoff", spec.FrontierID)}
 		}
-		return existingFrontier, nil
+		return existingFrontier, batch, receipt, isNew, nil
 	}
 
 	// Insert frontier
@@ -201,10 +213,10 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 		frontier.ThroughOwnerOrdinal, frontier.PublisherOwnerID, frontier.CreatedByFactID, intent,
 	)
 	if err != nil {
-		return Frontier{}, fmt.Errorf("insert frontier: %w", err)
+		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, fmt.Errorf("insert frontier: %w", err)
 	}
 
-	return frontier, nil
+	return frontier, batch, receipt, isNew, nil
 }
 
 func (s *SQLiteTraceStore) readOwnerCutoff(gctx context.Context, frontierID string) (Frontier, error) {
@@ -294,22 +306,6 @@ func intFromPayload(payload map[string]any, key string) (int, error) {
 	default:
 		return 0, &TraceStoreError{"frontier fact missing or invalid " + key}
 	}
-}
-
-func (s *SQLiteTraceStore) readFrontierRow(gctx context.Context, frontierID string) (*sql.Row, error) {
-	row := s.db.QueryRowContext(gctx, "SELECT * FROM frontiers WHERE frontier_id = ?", frontierID)
-	return row, nil
-}
-
-func (s *SQLiteTraceStore) readLatestFactOnPath(gctx context.Context, factID, ownerID string) (Record, error) {
-	row := s.db.QueryRowContext(gctx, `
-		SELECT records.*, path_entries.path_ref, path_entries.path_ordinal,
-		       path_entries.retained_context_ref, path_entries.kind_label
-		FROM path_entries
-		JOIN records ON records.record_id = path_entries.record_id
-		WHERE path_entries.record_id = ? AND path_entries.path_ref = ?
-		ORDER BY path_entries.path_ordinal DESC LIMIT 1`, factID, ownerID)
-	return scanRecord(row)
 }
 
 func (s *SQLiteTraceStore) readOwnerCutoffTx(tx *sql.Tx, frontierID string) (Frontier, error) {

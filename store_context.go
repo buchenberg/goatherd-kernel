@@ -59,12 +59,6 @@ func (s *SQLiteTraceStore) resolveGroupContext(
 	return newCtx, nil
 }
 
-func (s *SQLiteTraceStore) contextExists(gctx context.Context, contextID string) bool {
-	var count int
-	s.db.QueryRowContext(gctx, "SELECT 1 FROM contexts WHERE context_id = ?", contextID).Scan(&count)
-	return count > 0
-}
-
 func (s *SQLiteTraceStore) readContext(gctx context.Context, contextID string) (RetainedContext, error) {
 	row := s.db.QueryRowContext(gctx, "SELECT * FROM contexts WHERE context_id = ?", contextID)
 	var ctx RetainedContext
@@ -82,23 +76,6 @@ func (s *SQLiteTraceStore) readContext(gctx context.Context, contextID string) (
 	ctx.SemanticEnvironmentRefs = jsonToStrings(semJSON)
 	ctx.VisibilityPolicyRefs = jsonToStrings(visJSON)
 	return ctx, nil
-}
-
-func (s *SQLiteTraceStore) insertContext(gctx context.Context, rc RetainedContext, appendIntentID string) error {
-	_, err := s.db.ExecContext(gctx, `
-		INSERT INTO contexts(context_id, active_binding_refs_json, capability_witness_refs_json,
-			semantic_environment_refs_json, visibility_policy_refs_json, substrate_ref, containment, append_intent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		rc.ContextID,
-		stringToJSON(rc.ActiveBindingRefs),
-		stringToJSON(rc.CapabilityWitnessRefs),
-		stringToJSON(rc.SemanticEnvironmentRefs),
-		stringToJSON(rc.VisibilityPolicyRefs),
-		rc.SubstrateRef,
-		string(rc.Containment),
-		appendIntentID,
-	)
-	return err
 }
 
 func defaultContextDraft() RetainedContext {
