@@ -61,6 +61,26 @@ func (s *SQLiteTraceStore) publishAppendEvents(batch AppendBatch, receipt Append
 		return
 	}
 
+	// The causal parents come from the receipt's edges, not from the batch
+	// drafts: the edges carry the fully resolved parent list — group parents,
+	// draft fact parents, and resolved append-local refs, in envelope order —
+	// so a bus consumer sees exactly the causal graph the retained record
+	// carries, not a projection of the pre-resolution drafts.
+	//
+	// Edges are de-duplicated: two byte-identical drafts in the same batch
+	// resolve to the same content-addressed record id, so the receipt carries
+	// their parent edge once per draft. The retained envelope holds it once,
+	// and the event must match the envelope.
+	parentsByChild := make(map[string][]string, len(receipt.CausalEdges))
+	seenEdge := make(map[[2]string]bool, len(receipt.CausalEdges))
+	for _, edge := range receipt.CausalEdges {
+		if seenEdge[edge] {
+			continue
+		}
+		seenEdge[edge] = true
+		parentsByChild[edge[1]] = append(parentsByChild[edge[1]], edge[0])
+	}
+
 	now := time.Now()
 	factIdx := 0
 	for _, group := range batch.Groups {
@@ -84,7 +104,7 @@ func (s *SQLiteTraceStore) publishAppendEvents(batch AppendBatch, receipt Append
 				SchemaRef:     draft.SchemaRef,
 				KindLabel:     kindLabel,
 				Payload:       draft.Payload,
-				CausalParents: append(group.CausalParents, draft.CausedByFactIDs...),
+				CausalParents: parentsByChild[receipt.FactIDs[factIdx]],
 				Timestamp:     now,
 			}
 			s.bus.Publish(event)
@@ -472,18 +492,6 @@ func resolvedCauses(group AppendGroup, draft RecordDraft, localFactIDs map[strin
 		}
 	}
 	return result, nil
-}
-
-func (s *SQLiteTraceStore) validateCausalParents(gctx context.Context, causedBy []string, stagedIDs map[string]bool) error {
-	for _, id := range causedBy {
-		if stagedIDs[id] {
-			continue
-		}
-		if !s.factExists(gctx, id) {
-			return &UnknownFactError{fmt.Sprintf("causal parent does not exist: %s", id)}
-		}
-	}
-	return nil
 }
 
 func resolveSchemaRef(draft RecordDraft, ctx OperationContext) (string, error) {

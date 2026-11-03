@@ -115,7 +115,10 @@ func (s *SQLiteTraceStore) ReadCausalClosure(ctx context.Context, auth ReadConte
 		}
 	}
 
-	entries := s.canonicalFactOrder(ctx, seen)
+	entries, err := s.canonicalFactOrder(ctx, seen)
+	if err != nil {
+		return Slice{}, err
+	}
 	includeAnchors := closurePolicy == "include_external_anchors"
 	return s.buildSlice(ctx, entries, nil, opCtx.VisibilityProfile, modeFilter, includeAnchors)
 }
@@ -222,14 +225,6 @@ func (s *SQLiteTraceStore) readFactAtPath(gctx context.Context, factID, ownerID 
 		JOIN records ON records.record_id = path_entries.record_id
 		WHERE path_entries.record_id = ? AND path_entries.path_ref = ? AND path_entries.path_ordinal = ?`,
 		factID, ownerID, ordinal)
-	return scanRecord(row)
-}
-
-func (s *SQLiteTraceStore) readRecord(gctx context.Context, factID string) (Record, error) {
-	row := s.db.QueryRowContext(gctx, `
-		SELECT records.*, '' AS trace_owner_id, -1 AS owner_ordinal,
-		       '' AS retained_context_ref, '' AS kind_label
-		FROM records WHERE records.record_id = ?`, factID)
 	return scanRecord(row)
 }
 
@@ -398,9 +393,9 @@ func (s *SQLiteTraceStore) anchorForFact(gctx context.Context, factID, hiddenRea
 	}
 }
 
-func (s *SQLiteTraceStore) canonicalFactOrder(gctx context.Context, factIDs map[string]bool) []pathEntry {
+func (s *SQLiteTraceStore) canonicalFactOrder(gctx context.Context, factIDs map[string]bool) ([]pathEntry, error) {
 	if len(factIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	ids := make([]any, 0, len(factIDs))
@@ -420,7 +415,7 @@ func (s *SQLiteTraceStore) canonicalFactOrder(gctx context.Context, factIDs map[
 
 	rows, err := s.db.QueryContext(gctx, query, ids...)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("query canonical fact order: %w", err)
 	}
 	defer rows.Close()
 
@@ -435,14 +430,17 @@ func (s *SQLiteTraceStore) canonicalFactOrder(gctx context.Context, factIDs map[
 	for rows.Next() {
 		var pe pathEntry
 		if err := rows.Scan(&pe.recordID, &pe.pathRef, &pe.pathOrdinal); err != nil {
-			continue
+			return nil, fmt.Errorf("scan canonical fact order: %w", err)
 		}
 		if !seen[pe.recordID] {
 			seen[pe.recordID] = true
 			result = append(result, pe)
 		}
 	}
-	return result
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate canonical fact order: %w", err)
+	}
+	return result, nil
 }
 
 func visibleFact(fact Record, visibility VisibilityProfile) VisibleRecord {

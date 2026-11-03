@@ -69,6 +69,10 @@ type SQLiteTraceStore struct {
 // real-time supervision without modifying the store's persistence behavior.
 //
 // The bus is optional — existing code that doesn't set a bus sees no change.
+//
+// WithBus is not synchronized against Append: attach the bus as part of
+// store construction, before the store serves its first append. Attaching
+// while appends are in flight is a data race on the bus field.
 func (s *SQLiteTraceStore) WithBus(bus *EffectBus) *SQLiteTraceStore {
 	s.bus = bus
 	return s
@@ -100,10 +104,13 @@ func NewSQLiteTraceStore(path string) (*SQLiteTraceStore, error) {
 	}
 	db.SetMaxOpenConns(1) // SQLite is single-writer
 
-	// WAL mode allows concurrent readers with a single writer.
-	// Busy timeout makes SQLite wait for the lock instead of returning
-	// SQLITE_BUSY immediately when the middleware and tools write
-	// concurrently.
+	// One pooled connection serializes every statement in-process: reads
+	// queue behind an open write transaction at the pool, so in-process
+	// SQLITE_BUSY never arises and the busy timeout below only governs
+	// cross-process lock contention. WAL is still worth setting because it
+	// is a persistent file property — cross-process readers (the trace UI's
+	// read-only opener, the Python reference) get snapshot reads instead of
+	// blocking on the writer's lock.
 	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
@@ -169,19 +176,4 @@ func OpenSQLiteTraceStoreReadOnly(path string) (*SQLiteTraceStore, error) {
 // Close closes the underlying database connection.
 func (s *SQLiteTraceStore) Close(ctx context.Context) error {
 	return s.db.Close()
-}
-
-// queryer is satisfied by both *sql.DB and *sql.Tx.
-type queryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// q returns the transaction if non-nil, otherwise the raw db.
-func (s *SQLiteTraceStore) q(tx *sql.Tx) queryer {
-	if tx != nil {
-		return tx
-	}
-	return s.db
 }
