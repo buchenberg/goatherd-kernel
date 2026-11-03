@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "goatherd_kernel",
+  "project_id": "aef60b91-7a88-490e-abc4-be3333a25882"
+}
