@@ -39,10 +39,9 @@ func TestPublishEventsResolveLocalCausalRefs(t *testing.T) {
 	ch := bus.Subscribe("test")
 
 	// One batch: draft "a" (no parents), draft "b" citing "a" by append-local
-	// ref, draft "c" citing the external parent by fact id. The durable
-	// envelope of "b" carries the resolved record id; the event must too —
-	// publishing the pre-resolution draft refs would drop the local parent
-	// from the event entirely.
+	// ref. The durable envelope of "b" carries the resolved record id; the
+	// event must too — publishing the pre-resolution draft refs would drop
+	// the local parent from the event entirely.
 	receipt := appendDrafts(t, store, "publish:local-refs", "agent:main",
 		RecordDraft{
 			KindLabel:     "a",
@@ -104,6 +103,44 @@ func TestPublishEventsResolveLocalCausalRefs(t *testing.T) {
 		t.Fatalf("idempotent Append: %v", err)
 	}
 	assertNoEvent(t, ch)
+}
+
+func TestPublishEventsDeduplicateIdenticalDrafts(t *testing.T) {
+	store := newMemStore(t)
+	bus := NewEffectBus(0)
+	defer bus.Close()
+	store.WithBus(bus)
+	ch := bus.Subscribe("test")
+
+	seed := appendDrafts(t, store, "publish:dup:seed", "agent:main",
+		draft("seed", Capture, map[string]any{"step": 0}))
+	seedID := seed.FactIDs[0]
+	waitForEvent(t, ch) // drain the seed's event
+
+	// Two byte-identical drafts citing the same parent: content addressing
+	// resolves both to one record id and the receipt carries the causal edge
+	// once per draft. The event must match the retained envelope's single
+	// parent, not the doubled edge list.
+	receipt := appendDrafts(t, store, "publish:dup", "agent:main",
+		draft("dup", Capture, map[string]any{"n": 3}, seedID),
+		draft("dup", Capture, map[string]any{"n": 3}, seedID),
+	)
+
+	ev := waitForEvent(t, ch)
+	if ev.RecordID != receipt.FactIDs[0] || ev.RecordID != receipt.FactIDs[1] {
+		t.Fatalf("event record %s, want the shared record %s", ev.RecordID, receipt.FactIDs[0])
+	}
+	if !slices.Equal(ev.CausalParents, []string{seedID}) {
+		t.Fatalf("event parents %v, want exactly [%s]", ev.CausalParents, seedID)
+	}
+
+	retained, err := store.readFact(context.Background(), receipt.FactIDs[0])
+	if err != nil {
+		t.Fatalf("readFact: %v", err)
+	}
+	if !slices.Equal(ev.CausalParents, retained.Envelope.CausedByIDs) {
+		t.Fatalf("event parents %v != retained envelope parents %v", ev.CausalParents, retained.Envelope.CausedByIDs)
+	}
 }
 
 func TestPublishFrontierPublishesFactOnce(t *testing.T) {

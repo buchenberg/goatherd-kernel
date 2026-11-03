@@ -66,8 +66,18 @@ func (s *SQLiteTraceStore) publishAppendEvents(batch AppendBatch, receipt Append
 	// draft fact parents, and resolved append-local refs, in envelope order —
 	// so a bus consumer sees exactly the causal graph the retained record
 	// carries, not a projection of the pre-resolution drafts.
+	//
+	// Edges are de-duplicated: two byte-identical drafts in the same batch
+	// resolve to the same content-addressed record id, so the receipt carries
+	// their parent edge once per draft. The retained envelope holds it once,
+	// and the event must match the envelope.
 	parentsByChild := make(map[string][]string, len(receipt.CausalEdges))
+	seenEdge := make(map[[2]string]bool, len(receipt.CausalEdges))
 	for _, edge := range receipt.CausalEdges {
+		if seenEdge[edge] {
+			continue
+		}
+		seenEdge[edge] = true
 		parentsByChild[edge[1]] = append(parentsByChild[edge[1]], edge[0])
 	}
 
