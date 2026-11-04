@@ -1,10 +1,11 @@
 # Design — owner-scoped eviction and garbage collection (bead `4y8`)
 
-**Status:** design pass, revised after bot review (r2). It names the exact
-review findings it absorbed at the end. Implementation is a separate change
-with its own law tests. This doc matters for the v1.0 gate: the eviction API
-surface proposed here is part of what the 9fc freeze would pin, so the design
-must be accepted *or consciously deferred* before the freeze.
+**Status:** design pass, revised through bot review round 2 (r3); this
+revision (r4) closes the round-2 leftovers. It keeps the review provenance in
+§8. Implementation is a separate change with its own law tests. This doc
+matters for the v1.0 gate: the eviction API surface proposed here is part of
+what the 9fc freeze would pin, so the design must be accepted *or consciously
+deferred* before the freeze.
 
 ## 1. Drivers
 
@@ -75,8 +76,9 @@ func (s *SQLiteTraceStore) ReopenOwnerPath(ctx context.Context, auth AppendConte
 func (s *SQLiteTraceStore) CollectGarbage(ctx context.Context, auth AppendContext) (GarbageReceipt, error)
 ```
 
-All three return receipts or errors detailed below, because the caller — a
-privacy flow — must be able to report *what happened*.
+`EvictOwnerPath` and `CollectGarbage` return receipts (counts plus the ids of
+the invalidations they caused); `ReopenOwnerPath` returns only an error. The
+caller — a privacy flow — must be able to report *what happened*.
 
 ### Eviction semantics
 
@@ -118,8 +120,12 @@ A record is **live** iff any of:
 3. a `checkpoint_snapshots` row embeds it — scanned in the **`snapshot` BLOB
    cast to text**, *not* `state_json`: `state_json` holds the marshalled
    `WorkspaceState` (`backend`/`revision`/`data`), which carries no record
-   ids; the opaque caller payload is the separate `snapshot` column. Missing
-   this distinction would GC records a live checkpoint still embeds;
+   ids; the opaque caller payload is the separate `snapshot` column, and
+   `PersistCheckpointBlob` enforces no encoding on it — the scan is
+   best-effort UTF-8 substring matching, not a contract. Two consequences:
+   the receipt reports the scan methodology, and a caller whose blobs are
+   binary-heavy must pin record ids itself (sidecar column or payload
+   convention) if checkpoint-aware liveness must be exact;
 4. a **live** record names it in `caused_by_json` — the closure rule: dropping
    a parent a live child cites would corrupt the law-11/16-class invariants
    for that child's future reads (boundaries of that rule below, §"Dependent
@@ -133,7 +139,10 @@ A record is **live** iff any of:
 
 Liveness is a fixpoint over `record_edges`/`caused_by_json` and `witness_ref`
 backward from the seeded live set (children and witnesses keep their
-supporters).
+supporters). **Ordering inside the sweep:** all liveness is computed before
+any deletion; the witness reclamation below then deletes a witness's
+`kernel:witness` path entry **before** its record row — `path_entries`
+FK-references `records`, so the path entry has to go first.
 
 ### Witness reclamation (the accumulation fix)
 
@@ -165,9 +174,13 @@ design pins the read behavior for evicted parents:
   a digest-only external anchor**, the same shape law 17 already defines for
   out-of-cut parents (`TestLawExternalAnchorPreservesOutOfCutParent`), with an
   anchor kind that names the reason `evicted`. The read does not fail.
-- The implementation path is an outer-join record read used by closure
-  traversal (path-lacking records render as anchors; nothing else reads them),
-  not a change to `ReadFact`'s public contract for reachable records.
+- The implementation path is an outer-join record read used **wherever
+  out-of-path records are rendered as anchors** — closure traversal *and*
+  slice construction: `buildSlice` (which `ReadOwnerPrefix` and
+  `ResolveFrontier` share) renders parent anchors through the same
+  `readFact` join, so the degrade applies there too, not only to
+  `ReadCausalClosure`. `ReadFact`'s public contract for reachable records is
+  unchanged.
 - Frontier validation against a `created_by_fact_id` on an evicted path is
   moot by the ack rule: the frontier row is deleted with the path before the
   validation could run. The ack exists precisely because this combination is
@@ -273,13 +286,21 @@ inner-join dependent-read hazard, the empty-path-vs-loud-failure
 contradiction (resolved by the tombstone), and the ordering contradiction in
 the caller wiring.
 
-r3 absorbs the second pass: FK order corrected (children before parents —
+r3 absorbed the second pass: FK order corrected (children before parents —
 `path_entries`/`frontiers` reference `records`, so records were previously
-deleted too early for an enforced-FK database); the trust gate's honest scope — it is exactly as forgeable as append's own
-gate, and the doc says so instead of implying an absolute boundary; witness-intent reclamation
+deleted too early for an enforced-FK database); the trust gate's honest
+scope — it is exactly as forgeable as append's own gate, and the doc says so
+instead of implying an absolute boundary; witness-intent reclamation
 narrowed to refcount-only (witnesses share the *batch's* intent with their
 ordinary records — direct deletion could kill a live intent); the frontier
 ack extended to the *publisher* path (a cut record appended off-target loses
 its only path entry when the publisher is evicted); `ReopenOwnerPath` added
 to the frozen-surface sketch; and the new-law wording narrowed to the
 evicted path so it no longer contradicts the shared-fact dedup case.
+
+r4 closed the round-2 leftovers: the snapshot scan is documented as
+best-effort over an unencoded BLOB (with the sidecar-column escape hatch for
+binary-heavy callers), witness reclamation states its FK order (path entry
+before record), the anchor-degrade scope covers `buildSlice` (shared by
+`ReadOwnerPrefix` and `ResolveFrontier`) in addition to closure traversal,
+the receipts sentence names which method returns what, and this header.
