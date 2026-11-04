@@ -4,6 +4,40 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.20.0] - 2026-11-05
+
+The first authorized deletion surface, per the owner-scoped eviction and
+garbage-collection design (`docs/retention-gc.md`, rounds r1–r4 of bot
+review). Three new store methods — `EvictOwnerPath`, `ReopenOwnerPath`, and
+`CollectGarbage` — plus a new `ErrOwnerEvicted` sentinel. This is a
+**documented Go-side extension**, not parity drift: the Python reference has
+no deletion of any kind (recorded in `docs/history/parity-plan.md`).
+
+- `EvictOwnerPath(auth, ownerID, ackDanglingFrontiers)` removes an owner
+  path's reachability in one transaction: its `path_entries` rows, its
+  `owner_ordinals` row, a tombstone in the new `evicted_paths` table, and —
+  with the caller's ack — frontiers pinning the path as target **or** as
+  publisher. Reads of evicted paths return `ErrOwnerEvicted`; appends are
+  refused until `ReopenOwnerPath` deletes the tombstone. The internal
+  `kernel:witness` path is refused unconditionally. Records are untouched —
+  reclamation is GC's job.
+- `CollectGarbage(auth)` reclaims records unreachable from any surviving
+  path, frontier, or checkpoint snapshot (plus the causal parents and
+  `witness_ref`s those cite, orphaned contexts, and leaf append intents).
+  Witness reclamation is the accumulation fix: dead witnesses leave the
+  `kernel:witness` path with the FK-safe delete order. Snapshot liveness is
+  a best-effort scan for `sha256:`-shaped ids in the opaque payload;
+  `GarbageReceipt.SnapshotScan` names the methodology.
+- A surviving child's causal closure over an evicted parent degrades to a
+  digest-only external anchor (anchor kind `evicted`) instead of failing;
+  closure roots themselves must still be reachable and fail loudly.
+- **No existing read, append, frontier, or project behavior changes for any
+  path that is not evicted.** The new table joins
+  `createSchema`/`validateExistingSchema` behind a `meta` version marker, so
+  databases written before this release still open read-only (the tombstone
+  probe reads a missing table as not evicted). Eviction receipts and law
+  tests live in `store_retention.go` / `store_retention_test.go` (PR #74).
+
 ## [v0.19.0] - 2026-11-04
 
 **Breaking:** the materialization vocabulary leaves the kernel. The runtime
