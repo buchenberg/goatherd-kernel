@@ -4,6 +4,38 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [v0.19.0] - 2026-11-04
+
+**Breaking:** the materialization vocabulary leaves the kernel. The runtime
+layer — the substrate/result contract, the materialize orchestrator, and the
+receipt it serializes — outgrew the trace package: `MaterializationOutcome`
+with its `success`/`clean_failure`/`split_state` values, `MaterializationResult`,
+`MaterializationReceipt`, `NonNilAnchors`, and the reserved `OpMaterialize`
+operation kind are gone from this module's API. They now live in
+`github.com/buchenberg/goatherd-runtime` (`substrate` and `package
+materialize`), where the operation they authorize is implemented. Update
+import paths for anything dispatching materializations:
+
+    import MaterializationResult "github.com/buchenberg/goatherd-runtime/materialize"
+
+- The completed-intent ledger narrows to an opaque get/put:
+  `ReadCompletedMaterialization` returns `(digest, receiptJSON, found)` and
+  `RecordCompletedMaterialization` takes pre-serialized `receipt_json` bytes.
+  The kernel compares request digests; it decodes nothing. The receipt JSON
+  shape is unchanged — the same canonical serializer the orchestrator now
+  owns, byte-identical to v0.18.0 output and still cross-readable with the
+  Python reference.
+- `materialization_intents` and the rest of the store schema are unchanged
+  (frozen ABI).
+- Boundary hardening while the API could still move: the ledger write rejects
+  empty receipt JSON and bytes failing `json.Valid`; `ReadCompletedMaterialization`
+  stays pass-through.
+- Also fixes the `.beads` README example to use `bd close` (`done` is not a
+  built-in status), with the architecture-audit store fixes (PR #70).
+
+Collapse the runtime import with the pairing release: the runtime module pins
+this tag in its same-numbered PR.
+
 ## [v0.18.0] - 2026-10-22
 
 The module is renamed: `github.com/buchenberg/shepherd-kernel-go` is now
