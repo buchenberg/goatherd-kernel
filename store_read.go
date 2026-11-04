@@ -48,7 +48,7 @@ func (s *SQLiteTraceStore) ReadOwnerPrefix(ctx context.Context, auth ReadContext
 	defer readTx.Rollback()
 
 	if ownerID != "" {
-		if evicted, err := ownerEvicted(readTx, ownerID); err != nil {
+		if evicted, err := ownerEvicted(s.hasEvictedPaths, readTx, ownerID); err != nil {
 			return Slice{}, err
 		} else if evicted {
 			return Slice{}, &OwnerEvictedError{OwnerID: ownerID}

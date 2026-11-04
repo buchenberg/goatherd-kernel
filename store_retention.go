@@ -50,9 +50,10 @@ type EvictionReceipt struct {
 }
 
 // GarbageReceipt reports what CollectGarbage reclaimed. SnapshotScan
-// names the liveness methodology for checkpoint snapshots: the scan is a
-// best-effort UTF-8 substring match over the unencoded snapshot BLOB, so
-// a caller whose blobs are binary-heavy must pin record ids itself.
+// names the liveness methodology for checkpoint snapshots: a record id
+// embedded in the opaque payload keeps its record live only when the raw
+// text contains it, so a caller whose payloads encode ids in any other
+// shape (or split them across escapes) must pin record ids itself.
 type GarbageReceipt struct {
 	DeletedRecords        int
 	DeletedRecordEdges    int
@@ -80,21 +81,17 @@ type rowQuerier interface {
 	QueryRow(query string, args ...any) *sql.Row
 }
 
-// ownerEvicted reports whether the tombstone for ownerID exists. The
-// evicted_paths table can be absent on a database written before the
-// retention change — the version gate in validateExistingSchema keeps
-// those databases openable — and such a database has no tombstones, so a
-// missing table reads as not evicted rather than faulting every read.
-func ownerEvicted(q rowQuerier, ownerID string) (bool, error) {
-	var one int
-	err := q.QueryRow("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evicted_paths'").Scan(&one)
-	if err == sql.ErrNoRows {
+// ownerEvicted reports whether the tombstone for ownerID exists. Databases
+// written before the retention change have no evicted_paths table — the
+// version gate in validateExistingSchema keeps those openable — and no
+// tombstones, so a store opened without the table never probes it.
+// Presence is cached on the store at open time.
+func ownerEvicted(hasEvictedPaths bool, q rowQuerier, ownerID string) (bool, error) {
+	if !hasEvictedPaths {
 		return false, nil
 	}
-	if err != nil {
-		return false, fmt.Errorf("check evicted_paths table: %w", err)
-	}
-	err = q.QueryRow("SELECT 1 FROM evicted_paths WHERE trace_owner_id = ?", ownerID).Scan(&one)
+	var one int
+	err := q.QueryRow("SELECT 1 FROM evicted_paths WHERE trace_owner_id = ?", ownerID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -105,8 +102,8 @@ func ownerEvicted(q rowQuerier, ownerID string) (bool, error) {
 }
 
 // ownerPathEvictedTx reports whether the eviction tombstone for ownerID exists.
-func ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool, error) {
-	return ownerEvicted(tx, ownerID)
+func (s *SQLiteTraceStore) ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool, error) {
+	return ownerEvicted(s.hasEvictedPaths, tx, ownerID)
 }
 
 // EvictOwnerPath removes an owner path's reachability: every path_entries
@@ -136,7 +133,7 @@ func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContex
 	}
 	defer tx.Rollback()
 
-	if evicted, err := ownerPathEvictedTx(tx, ownerID); err != nil {
+	if evicted, err := s.ownerPathEvictedTx(tx, ownerID); err != nil {
 		return EvictionReceipt{}, err
 	} else if evicted {
 		return EvictionReceipt{}, &OwnerEvictedError{OwnerID: ownerID}
@@ -284,7 +281,7 @@ func (s *SQLiteTraceStore) CollectGarbage(ctx context.Context, auth AppendContex
 
 func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error) {
 	receipt := GarbageReceipt{
-		SnapshotScan: "best-effort UTF-8 substring match over checkpoint_snapshots.snapshot",
+		SnapshotScan: "best-effort scan for sha256:<64hex> record ids embedded in checkpoint_snapshots.snapshot payloads",
 	}
 
 	// The witness path is the one deliberate exception to "only eviction
@@ -499,7 +496,7 @@ func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error
 
 // sha256RecordIDPattern matches the kernel's record ids, which CanonicalDigest
 // always renders as "sha256:<64 lowercase hex>". The snapshot scan extracts
-// known record id against every payload.
+// the sha256-shaped record ids found in each payload.
 var sha256RecordIDPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 
 // markSnapshotLiveRecordsTx extends the live set with records whose ids

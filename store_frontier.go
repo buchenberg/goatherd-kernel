@@ -126,7 +126,7 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 		publisher = spec.TargetTraceOwnerID
 	}
 	for _, pinned := range []string{spec.TargetTraceOwnerID, publisher} {
-		if evicted, err := ownerPathEvictedTx(tx, pinned); err != nil {
+		if evicted, err := s.ownerPathEvictedTx(tx, pinned); err != nil {
 			return Frontier{}, AppendBatch{}, AppendReceipt{}, false, err
 		} else if evicted {
 			return Frontier{}, AppendBatch{}, AppendReceipt{}, false, &OwnerEvictedError{OwnerID: pinned}

@@ -160,7 +160,7 @@ func (s *SQLiteTraceStore) appendInTx(tx *sql.Tx, ctx OperationContext, batch Ap
 	// though its path was evicted afterwards — replay writes no path
 	// entries, so returning it restores no reachability.
 	for _, group := range batch.Groups {
-		if evicted, err := ownerPathEvictedTx(tx, groupOwner(group)); err != nil {
+		if evicted, err := s.ownerPathEvictedTx(tx, groupOwner(group)); err != nil {
 			return AppendReceipt{}, false, err
 		} else if evicted {
 			return AppendReceipt{}, false, &OwnerEvictedError{OwnerID: groupOwner(group)}
