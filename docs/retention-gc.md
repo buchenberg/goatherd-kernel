@@ -1,9 +1,10 @@
 # Design — owner-scoped eviction and garbage collection (bead `4y8`)
 
-**Status:** design pass (the deliverable the bead asks for). Implementation is a
-separate change with its own law tests. This doc matters for the v1.0 gate: the
-eviction API surface proposed here is part of what the 9fc freeze would pin, so
-the design must be accepted *or consciously deferred* before the freeze.
+**Status:** design pass, revised after bot review (r2). It names the exact
+review findings it absorbed at the end. Implementation is a separate change
+with its own law tests. This doc matters for the v1.0 gate: the eviction API
+surface proposed here is part of what the 9fc freeze would pin, so the design
+must be accepted *or consciously deferred* before the freeze.
 
 ## 1. Drivers
 
@@ -32,27 +33,35 @@ materialize orchestrator, so it creates no materialization intents.
   returns for every surviving consumer of that path. v1 is whole-path eviction
   only; the owner path becomes empty and the counter resets. Partial windows
   are deferred until a consumer names one.
-- **No eviction without an explicit authenticated call.** Nothing in the
-  append/read/frontier paths ever deletes; the laws stay intact for every
-  existing code path.
+- **No deletion from any existing code path.** Append, read, frontier, and
+  project keep their exact current behavior; eviction and GC are separate
+  entry points, and the laws keep holding for every flow that does not call
+  them.
 
 ## 3. API sketch
 
-Two store methods, both trusted-context-gated (the same trust level the
-`TrustedAppendContext` callers already use — the operation mutates the store,
-so it is not reachable through read contexts):
+Two store methods. **Authorization is a checked predicate, not a parameter
+type**: an `AppendContext` value is constructible by anyone in-process, so both
+methods enforce the same gate the materialize orchestrator uses — `TrustMode
+== "internal"` or a presented `trusted:internal` witness, checked at entry
+(mirroring `store_append.go`'s `ensureAppendAuthorized` shape). Anything less
+makes an irreversible operation trust a value, not an authority.
 
 ```go
 // EvictOwnerPath removes an owner path's reachability: every path_entries row
-// with path_ref = ownerID, the owner_ordinals row, and — with the caller's
-// ack — the frontier pins that reference the path. The facts themselves are
-// untouched; garbage collection is a separate, explicit step.
+// with path_ref = ownerID, the owner_ordinals row, a tombstone marking the
+// path evicted, and — with the caller's ack — the frontier pins that
+// reference the path. The facts themselves are untouched; garbage collection
+// is a separate, explicit step. Evicting the internal kernel:witness path is
+// refused unconditionally.
 func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContext, ownerID string, ackDanglingFrontiers bool) (EvictionReceipt, error)
 
 // CollectGarbage removes records no longer reachable from any surviving
 // owner path, recorded frontier, or checkpoint snapshot — plus the causal
-// parents those live records cite — and the append intents that lost their
-// last reference. Pure reclamation; it changes no visible read result.
+// parents those live records cite, the witnesses no live record's
+// witness_ref cites, and the append intents that lost their last reference.
+// Pure reclamation; it changes no visible read result except the witness
+// reclamation documented below.
 func (s *SQLiteTraceStore) CollectGarbage(ctx context.Context, auth AppendContext) (GarbageReceipt, error)
 ```
 
@@ -62,8 +71,17 @@ because the caller — a privacy flow — must be able to report *what happened*
 ### Eviction semantics
 
 - `path_entries` rows for the owner are deleted in one transaction with the
-  `owner_ordinals` row. A fresh append to the same `trace_owner_id` starts a
-  new path at ordinal 0; by construction nothing survives to collide with.
+  `owner_ordinals` row and a **tombstone** in a new `evicted_paths` table
+  (`trace_owner_id PRIMARY KEY`, `evicted_at`). Without a tombstone, a
+  missing path is indistinguishable from an empty one — `ReadOwnerPrefix`
+  returns a successful empty slice for unknown paths today — and the
+  "fails loudly" property would be an unfunded claim. Tombstoned paths:
+  reads return `ErrOwnerEvicted` (not an empty slice), and appends to the
+  path are refused until `ReopenOwnerPath(auth, ownerID)` deletes the
+  tombstone, after which the next append starts a fresh path at ordinal 0.
+  Schema note: `evicted_paths` joins `createSchema` as `CREATE TABLE IF NOT
+  EXISTS` and the required-tables list in `validateExistingSchema` adopts it
+  with a version gate, so databases opened before this change still open.
 - **Frontiers.** `frontiers` pins `(target_trace_owner_id, through_owner_ordinal,
   through_fact_id)` and re-validates against the path at read. After eviction
   that re-validation fails; the design makes the failure explicit rather than
@@ -83,70 +101,147 @@ A record is **live** iff any of:
 
 1. a surviving `path_entries` row references it;
 2. a `frontiers` row references it (`through_fact_id` or `created_by_fact_id`);
-3. a `checkpoint_snapshots` row embeds it (conservative: any snapshot whose
-   `state_json` names the record id — snapshot content is a blob, so the
-   check is a name scan, not a parse contract);
+3. a `checkpoint_snapshots` row embeds it — scanned in the **`snapshot` BLOB
+   cast to text**, *not* `state_json`: `state_json` holds the marshalled
+   `WorkspaceState` (`backend`/`revision`/`data`), which carries no record
+   ids; the opaque caller payload is the separate `snapshot` column. Missing
+   this distinction would GC records a live checkpoint still embeds;
 4. a **live** record names it in `caused_by_json` — the closure rule: dropping
    a parent a live child cites would corrupt the law-11/16-class invariants
-   for that child's future reads.
+   for that child's future reads (boundaries of that rule below, §"Dependent
+   reads");
+5. a **live** record's `witness_ref` names it — witness reachability is a
+   `witness_ref` chains-to-root property (`store_witness.go`
+   `validateWitnessChain`), not a causal-parent property. Witness records
+   also happen to live on the dedicated `kernel:witness` owner path (rule 1);
+   the rule here makes the protection explicit instead of incidental.
+   `RootWitnessRecordID`'s record is live unconditionally.
 
-Liveness is a fixpoint over `record_edges`/`caused_by_json` reached backward
-from the seeded live set (children keep their parents). Everything else —
-records, their `record_edges` rows, their `contexts` rows, and finally
-`append_intents` rows that lost their last referencing row — is deleted. This
-also resolves the standing "append_intents grow forever" item: the table
-becomes refcounted by its referents, not a landfill.
+Liveness is a fixpoint over `record_edges`/`caused_by_json` and `witness_ref`
+backward from the seeded live set (children and witnesses keep their
+supporters).
 
-Ordering inside the transaction: leaf intents last (they are FK targets from
-`records`/`contexts`/`path_entries`), `record_edges` rows with their records,
-and never a record still cited by a live one.
+### Witness reclamation (the accumulation fix)
+
+Witnesses are stored on the shared `kernel:witness` path (one path, all
+sessions) and each references its creating append intent. Session evictions
+never touch that path, so without a rule, witnesses and their intents
+accumulate forever even when every session that cited them is gone. GC is
+therefore allowed — as the one deliberate exception to "only eviction deletes
+path entries" — to remove `kernel:witness` path entries whose witness record
+no live record cites, together with that witness record and its spent intent
+row. Every path **other than** the witness path keeps its
+deletion-happens-only-via-eviction guarantee.
+
+### Dependent reads (the `readFact` constraint)
+
+`readFact` (`store_read.go:209–215`) inner-joins `path_entries`: a record
+with zero path entries does not read — today's closure and anchor machinery
+assumes reachability. Eviction breaks that assumption by design, so the
+design pins the read behavior for evicted parents:
+
+- A surviving child's causal-closure read over an evicted parent **degrades to
+  a digest-only external anchor**, the same shape law 17 already defines for
+  out-of-cut parents (`TestLawExternalAnchorPreservesOutOfCutParent`), with an
+  anchor kind that names the reason `evicted`. The read does not fail.
+- The implementation path is an outer-join record read used by closure
+  traversal (path-lacking records render as anchors; nothing else reads them),
+  not a change to `ReadFact`'s public contract for reachable records.
+- Frontier validation against a `created_by_fact_id` on an evicted path is
+  moot by the ack rule: the frontier row is deleted with the path before the
+  validation could run. The ack exists precisely because this combination is
+  not otherwise coherent.
+
+This is the one place eviction genuinely changes a surviving owner's read
+*presentation* (anchor metadata for a parent, not any fact content), and the
+new law below states that boundary exactly.
+
+### FK deletion order (implementer's checklist)
+
+`append_intents` is FK-referenced by `records`, `contexts`, `path_entries`,
+*and* `frontiers` (`store_schema.go:158`). Deleting leaf intents last is not a
+style choice — a frontier-deleting eviction loses a referent too. Order:
+`record_edges` rows with their records → orphaned `contexts` → evicted/empty
+`path_entries` → dangling `frontiers` (ack'd evictions only) → leaf
+`append_intents` (zero referents across all four tables). Never delete a
+record still cited by a live one.
 
 ## 4. Law impact
 
 - **Laws 21/22/23 (cut semantics, projection refusals):** unchanged. Every
   read surface keeps its semantics for every path not evicted; evicted paths
-  fail loudly (path-not-found class) instead of returning a silently truncated
+  fail loudly (`ErrOwnerEvicted`) instead of returning a silently truncated
   prefix.
 - **Law 25 (restart preserves records/cuts/paths):** unchanged for all
   non-eviction flows; eviction is a durable, transactional operation — the
-  absence persists across restarts like any other committed state.
+  absence (and the tombstone) persist across restarts like any other
+  committed state.
 - **Laws 11/16/17 (closed witness support, out-of-cut parent anchors):** the
-  closure rule in the liveness list is what keeps these honest — a record is
-  never dropped while a live record cites it.
+  `witness_ref` liveness rule keeps the support chain closed; the dependent
+  reads section pins what a surviving child sees when a parent was evicted
+  (a digest-only anchor — an extension of the law-17 shape, not a failure).
 - **Law 12 (witness cycle detection):** GC runs on well-formed graphs by
   induction (eviction/GC only delete; deletion cannot create a cycle). A cycle
   found mid-sweep is a corruption event: abort, return an error — never
   garbage-collect through an invariant hole.
-- **New law candidate (Go-side extension):** *an evicted path is unreadable
-  and its facts vanish from every owner-path read, while any other path's read
-  result is byte-identical to before.* Pinned against the dedup case
-  (`TestContentAddressedFactSpansMultipleOwnerPaths`): two owners share a
-  fact, evict one, the other's read does not change.
+- **New law candidate (Go-side extension):** *an evicted path reads as
+  `ErrOwnerEvicted`; its facts vanish from every owner-path read; other
+  paths' fact reads are byte-identical to before; a surviving child's closure
+  read renders an evicted parent as a digest-only anchor.* Pinned against the
+  dedup case (`TestContentAddressedFactSpansMultipleOwnerPaths`): two owners
+  share a fact, evict one, the other's direct reads do not change and its
+  closure anchors change only for the evicted parent.
 
 ## 5. Caller wiring (yaah-1e6g on top)
 
-yaah's session delete becomes a three-step flow:
+yaah's session delete runs **kernel-first** — the order is load-bearing:
 
-1. collect the owner IDs to evict **before** the read-model cascade deletes
-   `trace_owners` (the mapping is the only record of `sub-*` owner ids);
-2. run the state.db cascade as today (`session_repo.go` `DeleteSession`);
-3. call `EvictOwnerPath` for each owner, with `CollectGarbage` batched by the
-   caller's retention policy, not per delete — the sweep is global, so
-   per-delete sweeps are wasteful.
+1. collect the owner IDs to evict **before** anything is deleted (the
+   `trace_owners` mapping is the only record of `sub-*` owner ids);
+2. call `EvictOwnerPath` for each owner; on the ack question, the session's
+   own frontier cuts die with the session, so the deletion flow passes the
+   ack for its own paths;
+3. only after every eviction succeeded, run the state.db cascade
+   (`session_repo.go` `DeleteSession` — it drops `trace_owners` last within
+   its transaction, which preserves retry-ability the other way around);
+   schedule `CollectGarbage` separately, batched by the retention policy —
+   the sweep is global, so per-delete sweeps are wasteful.
 
-Failure ordering is load-bearing: kernel evictions happen **first**; the
-read-model rows are deleted only after eviction succeeds. The reverse order
-leaves the worst-case state on a crash — a "deleted" session whose content is
-still fully readable from the trace.
+A crash before step 3 completes leaves content evicted and the state model
+intact (the safe direction); a crash after it leaves both gone. The reverse
+order — read model first — would leave a "deleted" session whose content is
+still fully readable from the trace, with the mapping needed to find it
+already gone.
 
-## 6. Open questions (decisions the implementation needs)
+## 6. Decisions locked by this revision
 
-1. **Ack-on-dangling-frontier vs always-refuse.** Proposed: refuse without the
-   ack; privacy flows pass it deliberately when their policy says cuts die
-   with the session.
-2. **GC cadence.** A global sweep is cheap at yaah's scale and O(store) at
-   large ones; a watermark or `since` hint can bound the work later. Defer
-   until a second consumer exists.
-3. **Upstream the new law?** The Python reference has no eviction; this design
-   is a Go-side deliberate extension and must be recorded in the parity ledger
-   as such, not as parity drift.
+1. **Tombstone table over empty-path semantics.** "Fails loudly" was not
+   implementable without it: `ReadOwnerPrefix` returns a successful empty
+   slice for unknown paths, and dropping `owner_ordinals` erased the only
+   existence evidence. `evicted_paths` + `ErrOwnerEvicted` + explicit
+   `ReopenOwnerPath`.
+2. **Witness reclamation is in scope.** Without it, `kernel:witness` path
+   entries and their intents accumulate forever regardless of session
+   deletions — the stated retention problem would survive this design.
+3. **Authorization predicate spelled out** (internal trust mode or the
+   trusted internal witness, enforced at entry), not the parameter type.
+4. **Snapshot liveness scans the `snapshot` BLOB** (cast to text), not
+   `state_json`.
+5. **Dependent reads degrade to digest-only anchors** rather than failing;
+   the implementation carries an outer-join record read for closure
+   traversal only.
+6. **GC cadence: global, caller-batched.** A watermark/`since` bound is noted
+   as a future tightening, deferred until a second consumer exists.
+7. **Upstream status: deliberate Go-side extension.** The Python reference
+   has no eviction; the implementation records it in the parity ledger as an
+   extension, not as parity drift.
+
+## 7. Review provenance
+
+r2 absorbs the first bot review pass on this design: the checkpoint
+liveness column mix-up (`state_json` vs the `snapshot` BLOB), the missing
+`frontiers` referent in the FK ordering, the nominal trust gate, the
+witness-reachability gap (both `witness_ref`-based liveness and
+`kernel:witness` reclamation), the `readFact` inner-join dependent-read
+hazard, the empty-path-vs-loud-failure contradiction (resolved by the
+tombstone), and the ordering contradiction in the caller wiring.
