@@ -40,33 +40,43 @@ materialize orchestrator, so it creates no materialization intents.
 
 ## 3. API sketch
 
-Two store methods. **Authorization is a checked predicate, not a parameter
-type**: an `AppendContext` value is constructible by anyone in-process, so both
-methods enforce the same gate the materialize orchestrator uses — `TrustMode
-== "internal"` or a presented `trusted:internal` witness, checked at entry
-(mirroring `store_append.go`'s `ensureAppendAuthorized` shape). Anything less
-makes an irreversible operation trust a value, not an authority.
+Two store methods plus a reopen path — the full frozen surface is three
+methods. **Authorization is a checked predicate, not a parameter type**: an
+`AppendContext` value is constructible by anyone in-process, so all three
+enforce the same predicate the append path already relies on — `TrustMode ==
+"internal"` or a presented `trusted:internal` witness, checked at entry
+(mirroring `store_append.go`'s `ensureAppendAuthorized` shape). That
+predicate is only as strong as the append gate itself: the kernel's
+authorization model is in-process cooperative, and eviction is exactly as
+forgeable as `TrustedAppendContext`'s append — no more. The design states
+this rather than pretending a value-type check is an absolute boundary;
+process-level isolation is the boundary that actually holds.
 
 ```go
 // EvictOwnerPath removes an owner path's reachability: every path_entries row
 // with path_ref = ownerID, the owner_ordinals row, a tombstone marking the
-// path evicted, and — with the caller's ack — the frontier pins that
-// reference the path. The facts themselves are untouched; garbage collection
-// is a separate, explicit step. Evicting the internal kernel:witness path is
-// refused unconditionally.
+// path evicted, and — with the caller's ack — the frontier rows that pin
+// this path as target OR as publisher. The facts themselves are untouched;
+// garbage collection is a separate, explicit step. Evicting the internal
+// kernel:witness path is refused unconditionally.
 func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContext, ownerID string, ackDanglingFrontiers bool) (EvictionReceipt, error)
+
+// ReopenOwnerPath deletes the eviction tombstone so the path can take
+// appends again; the first append after reopening starts a fresh path at
+// ordinal 0.
+func (s *SQLiteTraceStore) ReopenOwnerPath(ctx context.Context, auth AppendContext, ownerID string) error
 
 // CollectGarbage removes records no longer reachable from any surviving
 // owner path, recorded frontier, or checkpoint snapshot — plus the causal
 // parents those live records cite, the witnesses no live record's
-// witness_ref cites, and the append intents that lost their last reference.
+// witness_ref cites, and the append intents left with zero referents.
 // Pure reclamation; it changes no visible read result except the witness
 // reclamation documented below.
 func (s *SQLiteTraceStore) CollectGarbage(ctx context.Context, auth AppendContext) (GarbageReceipt, error)
 ```
 
-Both return receipts (counts plus the ids of the invalidations they caused),
-because the caller — a privacy flow — must be able to report *what happened*.
+All three return receipts or errors detailed below, because the caller — a
+privacy flow — must be able to report *what happened*.
 
 ### Eviction semantics
 
@@ -82,14 +92,18 @@ because the caller — a privacy flow — must be able to report *what happened*
   Schema note: `evicted_paths` joins `createSchema` as `CREATE TABLE IF NOT
   EXISTS` and the required-tables list in `validateExistingSchema` adopts it
   with a version gate, so databases opened before this change still open.
-- **Frontiers.** `frontiers` pins `(target_trace_owner_id, through_owner_ordinal,
-  through_fact_id)` and re-validates against the path at read. After eviction
-  that re-validation fails; the design makes the failure explicit rather than
-  silent: eviction refuses when a frontier still pins this path unless the
-  caller passes `ackDanglingFrontiers`, in which case the frontier row is
-  deleted with the path. The cut record itself survives as content — law 22
-  (`TestFrontierIsImmutable`) keeps passing for every frontier not
-  evicted-with-ack.
+- **Frontiers — target *and* publisher sides.** `frontiers` pins
+  `(target_trace_owner_id, through_owner_ordinal, through_fact_id)` and
+  re-validates against the target path at read; the cut record itself
+  (`created_by_fact_id`) is appended on the **publisher** path, which defaults
+  to the target but can differ (`PublisherOwnerID`). Eviction therefore
+  checks both: it refuses when a frontier pins the evicted path as *target*
+  (read-time re-validation would dangle) or when the evicted path is the
+  frontier's *publisher* (the cut's record would lose its only path entry,
+  breaking the read of the cut fact itself) — unless the caller passes
+  `ackDanglingFrontiers`, in which case those frontier rows are deleted with
+  the path. Law 22 (`TestFrontierIsImmutable`) keeps passing for every
+  frontier not evicted-with-ack.
 - **Checkpoint snapshots (`checkpoint_snapshots`) are out of eviction scope in
   v1.** They are scope-keyed, not owner-keyed; a scope-side checkpoint purge
   belongs to the caller that created them (same trust level, separate method
@@ -126,12 +140,19 @@ supporters).
 Witnesses are stored on the shared `kernel:witness` path (one path, all
 sessions) and each references its creating append intent. Session evictions
 never touch that path, so without a rule, witnesses and their intents
-accumulate forever even when every session that cited them is gone. GC is
+accumulate forever even when every session that cites them is gone. GC is
 therefore allowed — as the one deliberate exception to "only eviction deletes
 path entries" — to remove `kernel:witness` path entries whose witness record
-no live record cites, together with that witness record and its spent intent
-row. Every path **other than** the witness path keeps its
-deletion-happens-only-via-eviction guarantee.
+no live record's `witness_ref` cites, together with that witness record. One
+boundary on this: a witness's append intent is **not** exclusively the
+witness's — witnesses are inserted under the *batch's* intent
+(`insertWitnessRecordIfMissingTx(tx, plan, batch.AppendIntentID)`), shared
+with that batch's ordinary records and contexts — so witness reclamation
+never deletes intents directly; it deletes the witness row and its path
+entry, and intent reclamation stays purely refcount-based (a leaf intent is
+deleted only when its referent count across `records`/`contexts`/
+`path_entries`/`frontiers` reaches zero). Every path **other than** the
+witness path keeps its deletion-happens-only-via-eviction guarantee.
 
 ### Dependent reads (the `readFact` constraint)
 
@@ -159,12 +180,16 @@ new law below states that boundary exactly.
 ### FK deletion order (implementer's checklist)
 
 `append_intents` is FK-referenced by `records`, `contexts`, `path_entries`,
-*and* `frontiers` (`store_schema.go:158`). Deleting leaf intents last is not a
-style choice — a frontier-deleting eviction loses a referent too. Order:
-`record_edges` rows with their records → orphaned `contexts` → evicted/empty
-`path_entries` → dangling `frontiers` (ack'd evictions only) → leaf
-`append_intents` (zero referents across all four tables). Never delete a
-record still cited by a live one.
+*and* `frontiers` (`store_schema.go:158`); `records` is FK-referenced by
+`path_entries`, `record_edges`, and `frontiers`
+(`through_fact_id`/`created_by_fact_id`); and foreign keys are enforced
+(`PRAGMA foreign_keys = ON`, `store.go`). So the sweep deletes **children
+before parents** in dependency order: surviving-referent-checked
+`path_entries` rows → ack-deleted `frontiers` rows → orphaned `contexts` →
+`record_edges` rows alongside their now-unreferenced `records` → leaf
+`append_intents` (zero referents across all four). Never delete a record
+still cited by a live one, and never a record a surviving path entry or
+frontier still references.
 
 ## 4. Law impact
 
@@ -185,12 +210,14 @@ record still cited by a live one.
   found mid-sweep is a corruption event: abort, return an error — never
   garbage-collect through an invariant hole.
 - **New law candidate (Go-side extension):** *an evicted path reads as
-  `ErrOwnerEvicted`; its facts vanish from every owner-path read; other
-  paths' fact reads are byte-identical to before; a surviving child's closure
-  read renders an evicted parent as a digest-only anchor.* Pinned against the
-  dedup case (`TestContentAddressedFactSpansMultipleOwnerPaths`): two owners
-  share a fact, evict one, the other's direct reads do not change and its
-  closure anchors change only for the evicted parent.
+  `ErrOwnerEvicted`; its facts vanish from the evicted path's reads; any
+  other path's direct fact reads are byte-identical to before; a surviving
+  child's closure read renders an evicted parent as a digest-only anchor.*
+  Pinned against the dedup case
+  (`TestContentAddressedFactSpansMultipleOwnerPaths`): two owners share a
+  fact, evict one — the survivor's reads are unchanged (the record is still
+  on the survivor's path; it does not vanish from *every* read, only from
+  the evicted path's).
 
 ## 5. Caller wiring (yaah-1e6g on top)
 
@@ -238,10 +265,21 @@ already gone.
 
 ## 7. Review provenance
 
-r2 absorbs the first bot review pass on this design: the checkpoint
-liveness column mix-up (`state_json` vs the `snapshot` BLOB), the missing
-`frontiers` referent in the FK ordering, the nominal trust gate, the
-witness-reachability gap (both `witness_ref`-based liveness and
-`kernel:witness` reclamation), the `readFact` inner-join dependent-read
-hazard, the empty-path-vs-loud-failure contradiction (resolved by the
-tombstone), and the ordering contradiction in the caller wiring.
+r2 absorbed the first review pass: the checkpoint liveness column mix-up
+(`state_json` vs the `snapshot` BLOB), the missing `frontiers` referent in
+the FK ordering, the nominal trust gate, the witness-reachability gap
+(`witness_ref` liveness + `kernel:witness` reclamation), the `readFact`
+inner-join dependent-read hazard, the empty-path-vs-loud-failure
+contradiction (resolved by the tombstone), and the ordering contradiction in
+the caller wiring.
+
+r3 absorbs the second pass: FK order corrected (children before parents —
+`path_entries`/`frontiers` reference `records`, so records were previously
+deleted too early for an enforced-FK database); the trust gate's honest scope — it is exactly as forgeable as append's own
+gate, and the doc says so instead of implying an absolute boundary; witness-intent reclamation
+narrowed to refcount-only (witnesses share the *batch's* intent with their
+ordinary records — direct deletion could kill a live intent); the frontier
+ack extended to the *publisher* path (a cut record appended off-target loses
+its only path entry when the publisher is evicted); `ReopenOwnerPath` added
+to the frozen-surface sketch; and the new-law wording narrowed to the
+evicted path so it no longer contradicts the shared-fact dedup case.
