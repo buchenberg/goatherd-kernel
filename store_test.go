@@ -315,22 +315,22 @@ func assertSameSequence(t *testing.T, read int, field string, got, want []string
 }
 
 // TestReservedOperationKindsAreUnreachable pins the status of the reserved
-// operation kinds after plan 03.
+// operation kinds.
 //
 // History: both kinds were once unreachable — the entry points take
 // AppendContext or ReadContext, whose ToOperationContext helpers set the
 // operation themselves, and no code read OperationContext.Operation. Plan 03
-// wired OpMaterialize: Materialize accepts an OperationContext and
-// ensureMaterializeAuthorized rejects any context whose Operation is not
-// OpMaterialize. That inverted the gap assertion this test used to carry
-// ("expected to be inverted into a rejection check when plan 03 wires
-// materialization"), exactly as its comment anticipated.
+// wired OpMaterialize; the runtime extraction (and later d7c) moved the
+// materialize operation kind altogether — the materialize orchestrator now
+// owns it, and the kernel no longer declares it. The kind is checked against
+// the kernel's enforced kinds only, so an accidental re declaration that
+// collides still fails here, on either side.
 //
 // OpObserve remains reserved and unreachable.
 func TestReservedOperationKindsAreUnreachable(t *testing.T) {
 	// A reserved kind must not collide with an enforced one, or declaring it
 	// would silently change the meaning of an existing operation.
-	enforced := []OperationKind{OpAppend, OpRead, OpPublishCut, OpMaterialize}
+	enforced := []OperationKind{OpAppend, OpRead, OpPublishCut}
 	for _, reserved := range []OperationKind{OpObserve} {
 		for _, e := range enforced {
 			if reserved == e {

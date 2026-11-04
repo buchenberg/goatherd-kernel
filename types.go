@@ -55,13 +55,6 @@ const (
 	OpRead       OperationKind = "read"
 	OpPublishCut OperationKind = "publish_cut"
 
-	// OpMaterialize is the operation kind the substrate materialization
-	// dispatch requires (plan 03): Materialize accepts an OperationContext
-	// and rejects any context whose Operation is not this kind. The
-	// append/read entry points still derive their own operation kinds, so
-	// the only way to present this one is through Materialize itself.
-	OpMaterialize OperationKind = "materialize"
-
 	// OpObserve is reserved for a future operation and remains unreachable:
 	// no exported entry point presents it.
 	OpObserve OperationKind = "observe"
@@ -179,11 +172,12 @@ type AppendReceipt struct {
 
 // OperationContext is the trace-facing operation context for kernel operations.
 //
-// Operation records which operation the context was built for. Since plan 03,
-// the materialization dispatch consults it: ensureMaterializeAuthorized
-// requires OpMaterialize and rejects anything else. The append/read helpers
-// still set it themselves and their authorization checks still do not consult
-// it, so outside Materialize it remains descriptive.
+// Operation records which operation the context was built for. The kernel's
+// own append/read entry points set it themselves and their authorization
+// checks do not consult it, so within the kernel it is descriptive. The
+// runtime's materialize orchestrator consults it against its own reserved
+// operation kind (d7c: the materialize vocabulary lives with the operation
+// that requires it, not here).
 type OperationContext struct {
 	ActorRef               string
 	Operation              OperationKind

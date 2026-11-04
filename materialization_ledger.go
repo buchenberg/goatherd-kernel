@@ -5,9 +5,14 @@ package trace
 // The ledger write is the idempotency commit point for the materialize
 // transition. These are package functions taking the store, deliberately
 // not methods on SQLiteTraceStore: the root package re-exports the store
-// type, and a method would surface ledger mutation in the public API. As
-// internal/ package functions they stay invisible to importers outside
-// the module.
+// type, and a method would surface ledger mutation in the public API.
+//
+// The ledger is deliberately opaque (d7c): the materialization vocabulary —
+// outcome, result, receipt types — lives in the runtime's materialize
+// orchestrator, which serializes its receipts to canonical receipt_json and
+// stores the bytes here. The kernel compares request digests and decodes
+// nothing; the JSON shape stays cross-readable with the Python reference by
+// the orchestrator's serialization contract.
 
 import (
 	"context"
@@ -16,61 +21,6 @@ import (
 	"fmt"
 	"strings"
 )
-
-// materializationReceiptJSON serializes a receipt for the ledger the way
-// Python's _receipt_to_json does: sorted keys, compact separators, the
-// ASCII flavour.
-func materializationReceiptJSON(receipt MaterializationReceipt) (string, error) {
-	body, err := CanonicalJSONASCIIBytes(map[string]any{
-		"outcome":             string(receipt.Outcome),
-		"substrate_ref":       receipt.SubstrateRef,
-		"target_record_ids":   NonNilStrings(receipt.TargetRecordIDs),
-		"produced_record_ids": NonNilStrings(receipt.ProducedRecordIDs),
-		"failure_reason":      receipt.FailureReason,
-		"world_side_anchors":  NonNilAnchors(receipt.WorldSideAnchors),
-	})
-	if err != nil {
-		return "", fmt.Errorf("materialization receipt encode: %w", err)
-	}
-	return string(body), nil
-}
-
-func materializationReceiptFromJSON(payload string) (MaterializationReceipt, error) {
-	var stored struct {
-		Outcome           string           `json:"outcome"`
-		SubstrateRef      string           `json:"substrate_ref"`
-		TargetRecordIDs   []string         `json:"target_record_ids"`
-		ProducedRecordIDs []string         `json:"produced_record_ids"`
-		FailureReason     string           `json:"failure_reason"`
-		WorldSideAnchors  []map[string]any `json:"world_side_anchors"`
-	}
-	// UseNumber, matching retained-body reads: without it a numeric anchor
-	// value would decode as float64 while a fresh receipt (and Python's
-	// json.loads) holds the exact number, so the replay comparison in the
-	// orchestrator would silently stop holding.
-	dec := json.NewDecoder(strings.NewReader(payload))
-	dec.UseNumber()
-	if err := dec.Decode(&stored); err != nil {
-		return MaterializationReceipt{}, fmt.Errorf("materialization receipt decode: %w", err)
-	}
-	return MaterializationReceipt{
-		Outcome:           MaterializationOutcome(stored.Outcome),
-		SubstrateRef:      stored.SubstrateRef,
-		TargetRecordIDs:   NonNilStrings(stored.TargetRecordIDs),
-		ProducedRecordIDs: NonNilStrings(stored.ProducedRecordIDs),
-		FailureReason:     stored.FailureReason,
-		WorldSideAnchors:  NonNilAnchors(stored.WorldSideAnchors),
-	}, nil
-}
-
-// NonNilAnchors returns an empty (non-nil) slice for nil input, so a receipt
-// without anchors serializes as [] rather than null, matching Python's tuple.
-func NonNilAnchors(anchors []map[string]any) []map[string]any {
-	if anchors == nil {
-		return []map[string]any{}
-	}
-	return anchors
-}
 
 // NewTraceStoreError constructs a TraceStoreError with the given message.
 // Exported for the runtime layer, which raises store-shaped errors from
@@ -83,40 +33,43 @@ func NewAppendIntentConflictError(msg string) *AppendIntentConflictError {
 	return &AppendIntentConflictError{msg: msg}
 }
 
-// ReadCompletedMaterialization looks up the ledger for a materialize intent.
-// The store lock is held only around the query, mirroring Python's
-// _read_completed_intent; no lock is held across the substrate call or the
-// capture append in the orchestrator.
-func ReadCompletedMaterialization(store *SQLiteTraceStore, intentID string) (string, MaterializationReceipt, bool, error) {
+// ReadCompletedMaterialization looks up the ledger for a materialize intent,
+// returning the stored request digest and the receipt JSON exactly as the
+// completer serialized it. The store lock is held only around the query,
+// mirroring Python's _read_completed_intent; no lock is held across the
+// substrate call or the capture append in the orchestrator.
+func ReadCompletedMaterialization(store *SQLiteTraceStore, intentID string) (digest string, receiptJSON string, found bool, err error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	var digest, receiptJSON string
-	err := store.db.QueryRow(
+	err = store.db.QueryRow(
 		"SELECT request_digest, receipt_json FROM materialization_intents WHERE materialize_intent_id = ?",
 		intentID,
 	).Scan(&digest, &receiptJSON)
 	if err == sql.ErrNoRows {
-		return "", MaterializationReceipt{}, false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", MaterializationReceipt{}, false, fmt.Errorf("query materialization intent: %w", err)
+		return "", "", false, fmt.Errorf("query materialization intent: %w", err)
 	}
-	receipt, err := materializationReceiptFromJSON(receiptJSON)
-	if err != nil {
-		return "", MaterializationReceipt{}, false, err
-	}
-	return digest, receipt, true, nil
+	return digest, receiptJSON, true, nil
 }
 
 // RecordCompletedMaterialization writes the ledger entry — the idempotency
-// commit point. The insert races only with a concurrent completion of the
+// commit point. receiptJSON is the receipt serialized in the completer's own
+// vocabulary; the kernel reads none of its semantics, but the boundary is
+// validated: empty input and bytes that fail json.Valid are rejected here, so
+// a malformed receipt — which the Python reference and later replays are
+// expected to decode as canonical JSON — can never reach the NOT NULL column
+// unchecked. The insert races only with a concurrent completion of the
 // same intent; INSERT OR IGNORE plus a digest comparison decides replays the
 // same way Python's IntegrityError branch does, without matching driver
 // error strings.
-func RecordCompletedMaterialization(store *SQLiteTraceStore, intentID, digest string, receipt MaterializationReceipt) error {
-	receiptJSON, err := materializationReceiptJSON(receipt)
-	if err != nil {
-		return err
+func RecordCompletedMaterialization(store *SQLiteTraceStore, intentID, digest, receiptJSON string) error {
+	if strings.TrimSpace(receiptJSON) == "" {
+		return NewTraceStoreError("materialization receipt JSON is required")
+	}
+	if !json.Valid([]byte(receiptJSON)) {
+		return NewTraceStoreError("materialization receipt JSON is not valid JSON")
 	}
 
 	store.mu.Lock()
@@ -155,7 +108,8 @@ func RecordCompletedMaterialization(store *SQLiteTraceStore, intentID, digest st
 
 // DeleteMaterializationIntent removes a completed-materialization ledger row.
 // It exists so tests can simulate the crash window between the capture append
-// and the ledger write; internal/ keeps it invisible outside the module.
+// and the ledger write; it is test support for the runtime orchestrator, not
+// a store operation.
 func DeleteMaterializationIntent(gctx context.Context, store *SQLiteTraceStore, intentID string) error {
 	_, err := store.db.ExecContext(gctx, `DELETE FROM materialization_intents WHERE materialize_intent_id = ?`, intentID)
 	if err != nil {
