@@ -8,6 +8,7 @@ package trace
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"fmt"
 
@@ -35,15 +36,33 @@ func (s *SQLiteTraceStore) ReadOwnerPrefix(ctx context.Context, auth ReadContext
 		return Slice{}, err
 	}
 
+	// An evicted path reads as ErrOwnerEvicted, never as a silently
+	// truncated (or empty) prefix; unknown paths still read as empty. The
+	// tombstone check and the entries query run in one read transaction,
+	// so an eviction committing between them cannot turn a "refused" read
+	// into a truncated one.
+	readTx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Slice{}, fmt.Errorf("begin read transaction: %w", err)
+	}
+	defer readTx.Rollback()
+
+	if ownerID != "" {
+		if evicted, err := ownerEvicted(s.hasEvictedPaths, readTx, ownerID); err != nil {
+			return Slice{}, err
+		} else if evicted {
+			return Slice{}, &OwnerEvictedError{OwnerID: ownerID}
+		}
+	}
+
 	var rows *sql.Rows
-	var err error
 	if ownerID == "" {
-		rows, err = s.db.QueryContext(ctx,
+		rows, err = readTx.Query(
 			"SELECT record_id, path_ref, path_ordinal FROM path_entries WHERE path_ordinal <= ? ORDER BY path_ref, path_ordinal ASC",
 			through,
 		)
 	} else {
-		rows, err = s.db.QueryContext(ctx,
+		rows, err = readTx.Query(
 			"SELECT record_id, path_ref, path_ordinal FROM path_entries WHERE path_ref = ? AND path_ordinal <= ? ORDER BY path_ordinal ASC",
 			ownerID, through,
 		)
@@ -60,6 +79,13 @@ func (s *SQLiteTraceStore) ReadOwnerPrefix(ctx context.Context, auth ReadContext
 			return Slice{}, fmt.Errorf("scan path entry: %w", err)
 		}
 		pathEntries = append(pathEntries, pe)
+	}
+	if err := rows.Err(); err != nil {
+		return Slice{}, fmt.Errorf("iterate path entries: %w", err)
+	}
+	rows.Close()
+	if err := readTx.Rollback(); err != nil && err != sql.ErrTxDone {
+		return Slice{}, fmt.Errorf("end read transaction: %w", err)
 	}
 
 	return s.buildSlice(ctx, pathEntries, nil, opCtx.VisibilityProfile, modeFilter, true)
@@ -92,10 +118,29 @@ func (s *SQLiteTraceStore) ReadCausalClosure(ctx context.Context, auth ReadConte
 		return Slice{}, err
 	}
 
-	// BFS over causal edges
-	pending := make([]string, len(roots))
-	copy(pending, roots)
+	// Requested roots must be reachable: an evicted root fails loudly
+	// instead of silently returning a shortened slice, matching ReadFact
+	// and ReadOwnerPrefix for the same record. The outer-join fallback
+	// applies only while traversing ancestors below.
 	seen := make(map[string]bool)
+	pending := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if seen[root] {
+			continue
+		}
+		fact, err := s.readFact(ctx, root)
+		if err != nil {
+			return Slice{}, err
+		}
+		seen[root] = true
+		for _, parent := range fact.GetEnvelope().CausedByIDs {
+			if !seen[parent] {
+				pending = append(pending, parent)
+			}
+		}
+	}
+
+	// BFS over causal edges
 	for len(pending) > 0 {
 		factID := pending[0]
 		pending = pending[1:]
@@ -104,7 +149,7 @@ func (s *SQLiteTraceStore) ReadCausalClosure(ctx context.Context, auth ReadConte
 		}
 		seen[factID] = true
 
-		fact, err := s.readFact(ctx, factID)
+		fact, err := readFactForClosure(ctx, s, factID)
 		if err != nil {
 			return Slice{}, err
 		}
@@ -214,6 +259,35 @@ func (s *SQLiteTraceStore) readFact(gctx context.Context, factID string) (Record
 		WHERE records.record_id = ?
 		ORDER BY path_entries.path_ref ASC, path_entries.path_ordinal ASC
 		LIMIT 1`, factID)
+	return scanRecord(row)
+}
+
+// readFactForClosure is the outer-join record read the retention design
+// pins for closure traversal: a record whose path entries were evicted —
+// the envelope still exists in records until GC reclaims it — reads back
+// with a placeholder view instead of failing, so a surviving child's
+// closure over an evicted parent degrades to a digest-only anchor and does
+// not fail. ReadFact's public contract for reachable records is unchanged.
+func readFactForClosure(gctx context.Context, s *SQLiteTraceStore, factID string) (Record, error) {
+	fact, err := s.readFact(gctx, factID)
+	if err == nil {
+		return fact, nil
+	}
+	var unknown *UnknownFactError
+	if errors.As(err, &unknown) {
+		return readRecordAnyPath(gctx, s, factID)
+	}
+	return Record{}, err
+}
+
+// readRecordAnyPath reads the records row alone, for out-of-path records.
+// The view carries no owner metadata: reachability metadata is gone with
+// the path by design.
+func readRecordAnyPath(gctx context.Context, s *SQLiteTraceStore, factID string) (Record, error) {
+	row := s.db.QueryRowContext(gctx, `
+		SELECT records.*, '' AS trace_owner_id, -1 AS owner_ordinal,
+		       '' AS retained_context_ref, '' AS kind_label
+		FROM records WHERE records.record_id = ?`, factID)
 	return scanRecord(row)
 }
 
@@ -367,6 +441,25 @@ func (s *SQLiteTraceStore) buildSlice(
 func (s *SQLiteTraceStore) anchorForFact(gctx context.Context, factID, hiddenReason string) ExternalAnchor {
 	fact, err := s.readFact(gctx, factID)
 	if err != nil {
+		// A parent evicted from its only path still has its retained
+		// envelope, so the anchor degrades to a digest-only shape with an
+		// anchor kind that names the reason, per the retention design —
+		// the read does not fail. Only a genuinely out-of-path record
+		// degrades; a real read fault still surfaces as "unknown".
+		var unknown *UnknownFactError
+		if errors.As(err, &unknown) {
+			if record, recErr := readRecordAnyPath(gctx, s, factID); recErr == nil {
+				return ExternalAnchor{
+					Ref:        factID,
+					AnchorKind: externalAnchorKindEvicted,
+					VisibleShape: map[string]any{
+						"schema_ref":  record.Envelope.SchemaRef,
+						"witness_ref": record.Envelope.WitnessRef,
+					},
+					HiddenReason: hiddenReason,
+				}
+			}
+		}
 		return ExternalAnchor{Ref: factID, AnchorKind: externalAnchorKindFact, HiddenReason: "unknown"}
 	}
 	kindLabel := ""

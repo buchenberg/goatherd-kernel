@@ -154,6 +154,19 @@ func (s *SQLiteTraceStore) appendInTx(tx *sql.Tx, ctx OperationContext, batch Ap
 		return AppendReceipt{}, false, fmt.Errorf("query append intent: %w", err)
 	}
 
+	// An evicted path takes no appends until ReopenOwnerPath deletes the
+	// tombstone. The check sits after the idempotency replay above: a batch
+	// that already committed must still return its stored receipt even
+	// though its path was evicted afterwards — replay writes no path
+	// entries, so returning it restores no reachability.
+	for _, group := range batch.Groups {
+		if evicted, err := s.ownerPathEvictedTx(tx, groupOwner(group)); err != nil {
+			return AppendReceipt{}, false, err
+		} else if evicted {
+			return AppendReceipt{}, false, &OwnerEvictedError{OwnerID: groupOwner(group)}
+		}
+	}
+
 	// Prepare append
 	contexts, witnessPlans, facts, receipt, err := s.prepareAppend(tx, batch, ctx)
 	if err != nil {

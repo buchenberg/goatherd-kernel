@@ -2,7 +2,9 @@
 
 **Status:** design pass, revised through bot review round 2 (r3); this
 revision (r4) closes the round-2 leftovers. It keeps the review provenance in
-§8. Implementation is a separate change with its own law tests. This doc
+§8. Implemented on `feat/retention-gc`: `store_retention.go` carries the
+three-method surface, and `store_retention_test.go` the Go-side laws of §4.
+This doc
 matters for the v1.0 gate: the eviction API surface proposed here is part of
 what the 9fc freeze would pin, so the design must be accepted *or consciously
 deferred* before the freeze.

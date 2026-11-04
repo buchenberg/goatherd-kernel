@@ -262,6 +262,12 @@ type FrontierSpec struct {
 // so a Go read is shape-identical to the reference instead of emitting "".
 const externalAnchorKindFact = "fact"
 
+// externalAnchorKindEvicted is the anchor kind for a parent evicted from
+// every path it sat on (retention design, dependent reads): a digest-only
+// anchor naming the reason, an extension of the out-of-cut anchor shape
+// rather than a read failure.
+const externalAnchorKindEvicted = "evicted"
+
 // ExternalAnchor is a visible reference to a fact outside a slice or hidden by visibility.
 type ExternalAnchor struct {
 	Ref          string

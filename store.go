@@ -62,6 +62,11 @@ type SQLiteTraceStore struct {
 	// checkpointBlobLimit bounds the caller snapshot bytes persisted per
 	// checkpoint (plan 05 §4). Zero means DefaultCheckpointBlobLimit.
 	checkpointBlobLimit int64
+	// hasEvictedPaths records whether the evicted_paths table exists in
+	// this database, fixed once at open: createSchema always creates it on
+	// a read-write open, and the read-only opener verifies the schema. The
+	// tombstone probe uses it to skip the sqlite_master check on hot paths.
+	hasEvictedPaths bool
 }
 
 // WithBus attaches an effect bus to the store. When set, every successful
@@ -124,7 +129,7 @@ func NewSQLiteTraceStore(path string) (*SQLiteTraceStore, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	s := &SQLiteTraceStore{path: path, db: db}
+	s := &SQLiteTraceStore{path: path, db: db, hasEvictedPaths: true}
 	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -169,6 +174,12 @@ func OpenSQLiteTraceStoreReadOnly(path string) (*SQLiteTraceStore, error) {
 	if err := s.validateExistingSchema(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// Evicted paths can only exist if the retention schema does; one probe
+	// at open lets the tombstone checks skip the sqlite_master lookup.
+	var present int
+	if err := s.db.QueryRow("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evicted_paths'").Scan(&present); err == nil {
+		s.hasEvictedPaths = true
 	}
 	return s, nil
 }
