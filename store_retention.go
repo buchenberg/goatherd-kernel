@@ -13,7 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
+	"regexp"
 
 	_ "modernc.org/sqlite"
 )
@@ -32,6 +32,13 @@ func (e *OwnerEvictedError) Error() string {
 }
 
 func (e *OwnerEvictedError) Is(target error) bool { return target == ErrOwnerEvicted }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // EvictionReceipt reports what EvictOwnerPath removed and which frontier
 // invalidations the caller's ack authorized, so a privacy flow can state
@@ -68,10 +75,26 @@ func ensureEvictionAuthorized(ctx OperationContext) error {
 	return ensureAppendAuthorized(ctx)
 }
 
-// ownerPathEvictedTx reports whether the eviction tombstone for ownerID exists.
-func ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool, error) {
+// rowQuerier covers *sql.DB and *sql.Tx for the shared tombstone probe.
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// ownerEvicted reports whether the tombstone for ownerID exists. The
+// evicted_paths table can be absent on a database written before the
+// retention change — the version gate in validateExistingSchema keeps
+// those databases openable — and such a database has no tombstones, so a
+// missing table reads as not evicted rather than faulting every read.
+func ownerEvicted(q rowQuerier, ownerID string) (bool, error) {
 	var one int
-	err := tx.QueryRow("SELECT 1 FROM evicted_paths WHERE trace_owner_id = ?", ownerID).Scan(&one)
+	err := q.QueryRow("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evicted_paths'").Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check evicted_paths table: %w", err)
+	}
+	err = q.QueryRow("SELECT 1 FROM evicted_paths WHERE trace_owner_id = ?", ownerID).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -81,16 +104,9 @@ func ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool, error) {
 	return true, nil
 }
 
-func (s *SQLiteTraceStore) ownerPathEvicted(gctx context.Context, ownerID string) (bool, error) {
-	var one int
-	err := s.db.QueryRowContext(gctx, "SELECT 1 FROM evicted_paths WHERE trace_owner_id = ?", ownerID).Scan(&one)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("query eviction tombstone: %w", err)
-	}
-	return true, nil
+// ownerPathEvictedTx reports whether the eviction tombstone for ownerID exists.
+func ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool, error) {
+	return ownerEvicted(tx, ownerID)
 }
 
 // EvictOwnerPath removes an owner path's reachability: every path_entries
@@ -356,23 +372,26 @@ func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error
 		return GarbageReceipt{}, fmt.Errorf("iterate causal edges: %w", err)
 	}
 
-	// Liveness fixpoint: children and witnesses keep their supporters.
-	for {
-		grew := false
-		for id := range live {
-			if witnessRef := recordWitness[id]; witnessRef != "" && witnessRef != RootWitnessRef && !live[witnessRef] {
-				live[witnessRef] = true
-				grew = true
-			}
-			for _, parent := range parentsOf[id] {
-				if !live[parent] {
-					live[parent] = true
-					grew = true
-				}
-			}
+	// Liveness fixpoint over a worklist: children and witnesses keep their
+	// supporters. Each record enters the worklist at most once, so this is
+	// O(V+E) over the causal and witness edges rather than one full live-set
+	// scan per closure level.
+	worklist := make([]string, 0, len(live))
+	for id := range live {
+		worklist = append(worklist, id)
+	}
+	for len(worklist) > 0 {
+		id := worklist[len(worklist)-1]
+		worklist = worklist[:len(worklist)-1]
+		if witnessRef := recordWitness[id]; witnessRef != "" && witnessRef != RootWitnessRef && !live[witnessRef] {
+			live[witnessRef] = true
+			worklist = append(worklist, witnessRef)
 		}
-		if !grew {
-			break
+		for _, parent := range parentsOf[id] {
+			if !live[parent] {
+				live[parent] = true
+				worklist = append(worklist, parent)
+			}
 		}
 	}
 
@@ -384,7 +403,7 @@ func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error
 		return GarbageReceipt{}, err
 	}
 
-	dead := make([]string, 0, len(recordWitness)-len(live))
+	dead := make([]string, 0, maxInt(0, len(recordWitness)-len(live)))
 	for id := range recordWitness {
 		if !live[id] {
 			dead = append(dead, id)
@@ -395,7 +414,12 @@ func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error
 	// order: path_entries and record_edges reference records, records and
 	// contexts and path_entries and frontiers reference append_intents.
 	if len(dead) > 0 {
-		if _, err := tx.Exec("CREATE TEMP TABLE dead_records(record_id TEXT PRIMARY KEY)"); err != nil {
+		// Temp tables live on the pooled connection: drop-then-create makes
+		// the sweep safe even if a previous run's cleanup was skipped.
+		if _, err := tx.Exec("DROP TABLE IF EXISTS temp.dead_records"); err != nil {
+			return GarbageReceipt{}, fmt.Errorf("clear staged dead records: %w", err)
+		}
+		if _, err := tx.Exec("CREATE TEMP TABLE IF NOT EXISTS dead_records(record_id TEXT PRIMARY KEY)"); err != nil {
 			return GarbageReceipt{}, fmt.Errorf("stage dead records: %w", err)
 		}
 		defer tx.Exec("DROP TABLE IF EXISTS temp.dead_records")
@@ -473,54 +497,34 @@ func (s *SQLiteTraceStore) collectGarbageInTx(tx *sql.Tx) (GarbageReceipt, error
 	return receipt, nil
 }
 
+// sha256RecordIDPattern matches the kernel's record ids, which CanonicalDigest
+// always renders as "sha256:<64 lowercase hex>". The snapshot scan extracts
+// known record id against every payload.
+var sha256RecordIDPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
+
 // markSnapshotLiveRecordsTx extends the live set with records whose ids
 // appear in any checkpoint snapshot's opaque payload. The snapshot column
 // carries the caller's encoded payload with no contract on it, so the scan
-// is best-effort UTF-8 substring matching: a caller whose blobs are
+// is best-effort: one pass per snapshot extracting sha256-shaped ids, blind
+// to ids an encoding splits across escapes. A caller whose blobs are
 // binary-heavy must pin record ids itself (sidecar column or payload
 // convention) if checkpoint-aware liveness must be exact.
 func markSnapshotLiveRecordsTx(tx *sql.Tx, live map[string]bool, receipt *GarbageReceipt) error {
-	var snapshotTexts []string
 	rows, err := tx.Query("SELECT CAST(snapshot AS TEXT) FROM checkpoint_snapshots")
 	if err != nil {
 		return fmt.Errorf("scan checkpoint snapshots: %w", err)
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var text string
 		if err := rows.Scan(&text); err != nil {
-			rows.Close()
 			return fmt.Errorf("scan checkpoint snapshot text: %w", err)
 		}
-		snapshotTexts = append(snapshotTexts, text)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate checkpoint snapshots: %w", err)
-	}
-	if len(snapshotTexts) == 0 {
-		return nil
-	}
-
-	idRows, err := tx.Query("SELECT record_id FROM records")
-	if err != nil {
-		return fmt.Errorf("scan record ids for snapshot liveness: %w", err)
-	}
-	defer idRows.Close()
-	for idRows.Next() {
-		var id string
-		if err := idRows.Scan(&id); err != nil {
-			return fmt.Errorf("scan record id: %w", err)
-		}
-		if !live[id] {
-			for _, text := range snapshotTexts {
-				if strings.Contains(text, id) {
-					live[id] = true
-					break
-				}
-			}
+		for _, id := range sha256RecordIDPattern.FindAllString(text, -1) {
+			live[id] = true
 		}
 	}
-	return idRows.Err()
+	return rows.Err()
 }
 
 // checkWitnessCycles walks every surviving record's witness chain to the

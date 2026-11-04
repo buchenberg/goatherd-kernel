@@ -8,10 +8,14 @@ package trace
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestEvictedPathFailsLoudlyAndReopensAtOrdinalZero(t *testing.T) {
@@ -76,6 +80,17 @@ func TestEvictedPathFailsLoudlyAndReopensAtOrdinalZero(t *testing.T) {
 	// Tombstone is one-shot: reopening a live path fails loudly.
 	if err := store.ReopenOwnerPath(context.Background(), trustedAppend, "owner:evict"); err == nil {
 		t.Error("ReopenOwnerPath on non-evicted path: want error, got nil")
+	}
+}
+
+func TestCollectGarbageOnEmptyStoreNeverPanics(t *testing.T) {
+	store := newMemStore(t)
+	gc, err := store.CollectGarbage(context.Background(), trustedAppend)
+	if err != nil {
+		t.Fatalf("CollectGarbage on empty store: %v", err)
+	}
+	if gc.DeletedRecords != 0 || gc.DeletedWitnessEntries != 0 || gc.DeletedAppendIntents != 0 {
+		t.Errorf("empty-store sweep reclaimed %+v; want a zero receipt", gc)
 	}
 }
 
@@ -156,6 +171,87 @@ func TestEvictionRefusesPinnedFrontierOnPublisherPath(t *testing.T) {
 	}
 	if len(slice.FactIDs()) != 1 {
 		t.Errorf("target path has %d facts, want 1", len(slice.FactIDs()))
+	}
+}
+
+// Regression for the review's critical on the version gate: a database
+// written before the retention change has no evicted_paths table and no
+// marker, and must still open read-only and serve reads — the tombstone
+// probe reads a missing table as not evicted.
+func TestReadOnlyOpenOfPreRetentionSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-retention.trace.sqlite")
+	store, err := NewSQLiteTraceStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteTraceStore: %v", err)
+	}
+	expected := appendDrafts(t, store, "intent:legacy", "owner:legacy", draft("step", Capture, nil))
+	if err := store.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Strip the retention bits to reconstruct the pre-retention schema.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := raw.Exec("DROP TABLE evicted_paths"); err != nil {
+		t.Fatalf("drop evicted_paths: %v", err)
+	}
+	if _, err := raw.Exec("DELETE FROM meta WHERE key = 'schema:evicted_paths'"); err != nil {
+		t.Fatalf("delete schema marker: %v", err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close raw: %v", err)
+	}
+
+	viewer, err := OpenSQLiteTraceStoreReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteTraceStoreReadOnly on pre-retention schema: %v", err)
+	}
+	defer viewer.Close(context.Background())
+
+	slice, err := viewer.ReadOwnerPrefix(context.Background(), reader, "owner:legacy", 99, ModeBoth)
+	if err != nil {
+		t.Fatalf("ReadOwnerPrefix on pre-retention database: %v", err)
+	}
+	if len(slice.FactIDs()) != 1 || slice.FactIDs()[0] != expected.FactIDs[0] {
+		t.Errorf("pre-retention read returned %v, want [%s]", slice.FactIDs(), expected.FactIDs[0])
+	}
+}
+
+func TestAppendIdempotentReplayAfterEviction(t *testing.T) {
+	store := newMemStore(t)
+	batch := AppendBatch{
+		AppendIntentID: "intent:retry",
+		Groups:         []AppendGroup{{TraceOwnerID: "owner:retry", FactDrafts: []RecordDraft{draft("step", Capture, nil)}}},
+	}
+	original, err := store.Append(context.Background(), trustedAppend, batch)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := store.EvictOwnerPath(context.Background(), trustedAppend, "owner:retry", false); err != nil {
+		t.Fatalf("EvictOwnerPath: %v", err)
+	}
+
+	replayed, err := store.Append(context.Background(), trustedAppend, batch)
+	if err != nil {
+		t.Fatalf("idempotent replay after eviction: %v", err)
+	}
+	if replayed.AppendIntentID != original.AppendIntentID || len(replayed.FactIDs) != len(original.FactIDs) {
+		t.Errorf("replay returned %+v, want stored receipt %+v", replayed, original)
+	}
+}
+
+// A closure read rooted at an unreachable record fails loudly instead of
+// silently returning a shortened slice whose shape depends on GC timing.
+func TestClosureRootOnEvictedPathFailsLoudly(t *testing.T) {
+	store := newMemStore(t)
+	root := appendDrafts(t, store, "intent:root", "owner:root", draft("step", Capture, nil))
+	if _, err := store.EvictOwnerPath(context.Background(), trustedAppend, "owner:root", false); err != nil {
+		t.Fatalf("EvictOwnerPath: %v", err)
+	}
+	if _, err := store.ReadCausalClosure(context.Background(), reader, []string{root.FactIDs[0]}, ModeBoth, "visible_only"); err == nil {
+		t.Error("closure rooted at an evicted record: want error, got nil")
 	}
 }
 
