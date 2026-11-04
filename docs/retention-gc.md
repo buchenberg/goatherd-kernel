@@ -152,13 +152,14 @@ never touch that path, so without a rule, witnesses and their intents
 accumulate forever even when every session that cites them is gone. GC is
 therefore allowed — as the one deliberate exception to "only eviction deletes
 path entries" — to remove `kernel:witness` path entries whose witness record
-no live record's `witness_ref` cites, together with that witness record. One
-boundary on this: a witness's append intent is **not** exclusively the
-witness's — witnesses are inserted under the *batch's* intent
+no live record's `witness_ref` cites, together with that witness record. The
+**witness's append intent is out of reach here**: witnesses are inserted under
+the *batch's* intent
 (`insertWitnessRecordIfMissingTx(tx, plan, batch.AppendIntentID)`), shared
 with that batch's ordinary records and contexts — so witness reclamation
 never deletes intents directly; it deletes the witness row and its path
-entry, and intent reclamation stays purely refcount-based (a leaf intent is
+entry (entry first, per the FK order above), and intent reclamation stays
+purely refcount-based (a leaf intent is
 deleted only when its referent count across `records`/`contexts`/
 `path_entries`/`frontiers` reaches zero). Every path **other than** the
 witness path keeps its deletion-happens-only-via-eviction guarantee.
