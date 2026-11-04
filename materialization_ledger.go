@@ -17,7 +17,9 @@ package trace
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // NewTraceStoreError constructs a TraceStoreError with the given message.
@@ -53,12 +55,23 @@ func ReadCompletedMaterialization(store *SQLiteTraceStore, intentID string) (dig
 }
 
 // RecordCompletedMaterialization writes the ledger entry — the idempotency
-// commit point. receiptJSON is the serialized receipt in the completer's own
-// vocabulary. The insert races only with a concurrent completion of the
+// commit point. receiptJSON is the receipt serialized in the completer's own
+// vocabulary; the kernel reads none of its semantics, but the boundary is
+// validated: empty input and bytes that fail json.Valid are rejected here, so
+// a malformed receipt — which the Python reference and later replays are
+// expected to decode as canonical JSON — can never reach the NOT NULL column
+// unchecked. The insert races only with a concurrent completion of the
 // same intent; INSERT OR IGNORE plus a digest comparison decides replays the
 // same way Python's IntegrityError branch does, without matching driver
 // error strings.
 func RecordCompletedMaterialization(store *SQLiteTraceStore, intentID, digest, receiptJSON string) error {
+	if strings.TrimSpace(receiptJSON) == "" {
+		return NewTraceStoreError("materialization receipt JSON is required")
+	}
+	if !json.Valid([]byte(receiptJSON)) {
+		return NewTraceStoreError("materialization receipt JSON is not valid JSON")
+	}
+
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
