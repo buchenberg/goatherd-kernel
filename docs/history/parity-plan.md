@@ -86,6 +86,7 @@ divergence (documented decision) · ➖ out of scope · 🟦 Go-only strength.
 | 25 executable ABI laws | `test_kernel_abi_v0_laws.py` (~790 L) | `laws_test.go` + the coverage map in `docs/law-coverage.md` | ✅ landed in v0.5.0 (T1.8) |
 | Authorization model | Slice-A trusted contexts; `full_internal` requires trusted authority; operation kinds | same for append/read; `OpMaterialize` enforced by `Materialize` (any other operation kind rejected); `OpObserve` still reserved | ✅ for materialize (plan 03, landed); `OpObserve` stays reserved |
 | `context.Context` / cancellation | n/a (threading) | `ctx context.Context` first on every store API, SQL `Context` variants throughout | ✅ landed in v0.9.0 (plan 05 §6, T4.5) |
+| Owner-scoped eviction + garbage collection (bead `4y8`) | none — the Python reference has no deletion of any kind | `store_retention.go`: `EvictOwnerPath` / `ReopenOwnerPath` / `CollectGarbage`, `evicted_paths` tombstone, digest-only `evicted` anchors for surviving children — **documented extension, not parity drift** (design: `docs/retention-gc.md`) | ✅ landed on `feat/retention-gc` |
 
 ### 2.2 Rings 1–2 — schemas and runtime handles
 

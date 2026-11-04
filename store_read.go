@@ -8,6 +8,7 @@ package trace
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"fmt"
 
@@ -33,6 +34,16 @@ func (s *SQLiteTraceStore) ReadOwnerPrefix(ctx context.Context, auth ReadContext
 	}
 	if err := ensureModeFilter(modeFilter); err != nil {
 		return Slice{}, err
+	}
+
+	// An evicted path reads as ErrOwnerEvicted, never as a silently
+	// truncated (or empty) prefix; unknown paths still read as empty.
+	if ownerID != "" {
+		if evicted, err := s.ownerPathEvicted(ctx, ownerID); err != nil {
+			return Slice{}, err
+		} else if evicted {
+			return Slice{}, &OwnerEvictedError{OwnerID: ownerID}
+		}
 	}
 
 	var rows *sql.Rows
@@ -104,7 +115,7 @@ func (s *SQLiteTraceStore) ReadCausalClosure(ctx context.Context, auth ReadConte
 		}
 		seen[factID] = true
 
-		fact, err := s.readFact(ctx, factID)
+		fact, err := readFactForClosure(ctx, s, factID)
 		if err != nil {
 			return Slice{}, err
 		}
@@ -214,6 +225,35 @@ func (s *SQLiteTraceStore) readFact(gctx context.Context, factID string) (Record
 		WHERE records.record_id = ?
 		ORDER BY path_entries.path_ref ASC, path_entries.path_ordinal ASC
 		LIMIT 1`, factID)
+	return scanRecord(row)
+}
+
+// readFactForClosure is the outer-join record read the retention design
+// pins for closure traversal: a record whose path entries were evicted —
+// the envelope still exists in records until GC reclaims it — reads back
+// with a placeholder view instead of failing, so a surviving child's
+// closure over an evicted parent degrades to a digest-only anchor and does
+// not fail. ReadFact's public contract for reachable records is unchanged.
+func readFactForClosure(gctx context.Context, s *SQLiteTraceStore, factID string) (Record, error) {
+	fact, err := s.readFact(gctx, factID)
+	if err == nil {
+		return fact, nil
+	}
+	var unknown *UnknownFactError
+	if errors.As(err, &unknown) {
+		return readRecordAnyPath(gctx, s, factID)
+	}
+	return Record{}, err
+}
+
+// readRecordAnyPath reads the records row alone, for out-of-path records.
+// The view carries no owner metadata: reachability metadata is gone with
+// the path by design.
+func readRecordAnyPath(gctx context.Context, s *SQLiteTraceStore, factID string) (Record, error) {
+	row := s.db.QueryRowContext(gctx, `
+		SELECT records.*, '' AS trace_owner_id, -1 AS owner_ordinal,
+		       '' AS retained_context_ref, '' AS kind_label
+		FROM records WHERE records.record_id = ?`, factID)
 	return scanRecord(row)
 }
 
@@ -367,6 +407,21 @@ func (s *SQLiteTraceStore) buildSlice(
 func (s *SQLiteTraceStore) anchorForFact(gctx context.Context, factID, hiddenReason string) ExternalAnchor {
 	fact, err := s.readFact(gctx, factID)
 	if err != nil {
+		// A parent evicted from its only path still has its retained
+		// envelope, so the anchor degrades to a digest-only shape with an
+		// anchor kind that names the reason, per the retention design —
+		// the read does not fail.
+		if record, recErr := readRecordAnyPath(gctx, s, factID); recErr == nil {
+			return ExternalAnchor{
+				Ref:        factID,
+				AnchorKind: externalAnchorKindEvicted,
+				VisibleShape: map[string]any{
+					"schema_ref":  record.Envelope.SchemaRef,
+					"witness_ref": record.Envelope.WitnessRef,
+				},
+				HiddenReason: hiddenReason,
+			}
+		}
 		return ExternalAnchor{Ref: factID, AnchorKind: externalAnchorKindFact, HiddenReason: "unknown"}
 	}
 	kindLabel := ""

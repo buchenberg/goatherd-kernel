@@ -4,6 +4,7 @@ package trace
 // migrations the store methods assume.
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -26,6 +27,12 @@ var expectedTables = []string{
 	"checkpoint_snapshots",
 	"frontiers",
 }
+
+// retentionSchemaMarkerKey gates the evicted_paths table requirement: a
+// database written before the retention change has no marker and no
+// evicted_paths table, and both still open read-only. createSchema adds
+// the marker on every read-write open.
+const retentionSchemaMarkerKey = "schema:evicted_paths"
 
 // validateExistingSchema checks sqlite_master for the expected tables
 // without running any DDL. It is the read-only counterpart of createSchema:
@@ -57,6 +64,19 @@ func (s *SQLiteTraceStore) validateExistingSchema() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("not a trace database: missing tables: %s", strings.Join(missing, ", "))
+	}
+
+	// Version gate for evicted_paths: databases created before the
+	// retention change carry no marker in meta, so they still open
+	// read-only without the table. Once createSchema has run once on a
+	// read-write open, the table and marker exist together.
+	var marker string
+	err = s.db.QueryRow("SELECT value FROM meta WHERE key = ?", retentionSchemaMarkerKey).Scan(&marker)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("read retention schema marker: %w", err)
+	}
+	if err == nil && !have["evicted_paths"] {
+		return fmt.Errorf("not a trace database: missing table: evicted_paths")
 	}
 	return nil
 }
@@ -160,6 +180,15 @@ func (s *SQLiteTraceStore) createSchema() error {
 			FOREIGN KEY(created_by_fact_id) REFERENCES records(record_id),
 			FOREIGN KEY(append_intent_id) REFERENCES append_intents(append_intent_id)
 		);
+
+		CREATE TABLE IF NOT EXISTS evicted_paths (
+			trace_owner_id TEXT PRIMARY KEY,
+			evicted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("INSERT OR IGNORE INTO meta(key, value) VALUES (?, '1')", retentionSchemaMarkerKey)
 	return err
 }

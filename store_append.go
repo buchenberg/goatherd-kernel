@@ -129,6 +129,15 @@ func (s *SQLiteTraceStore) appendInTx(tx *sql.Tx, ctx OperationContext, batch Ap
 	if err := validateBatchShape(batch, ctx); err != nil {
 		return AppendReceipt{}, false, err
 	}
+	// An evicted path takes no appends until ReopenOwnerPath deletes the
+	// tombstone; the refusal is loud, not a fresh-looking start.
+	for _, group := range batch.Groups {
+		if evicted, err := ownerPathEvictedTx(tx, groupOwner(group)); err != nil {
+			return AppendReceipt{}, false, err
+		} else if evicted {
+			return AppendReceipt{}, false, &OwnerEvictedError{OwnerID: groupOwner(group)}
+		}
+	}
 	batchDigest, err := batchDigest(batch, ctx)
 	if err != nil {
 		return AppendReceipt{}, false, err

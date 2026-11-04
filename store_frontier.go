@@ -121,6 +121,18 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, fmt.Errorf("frontier_id is required")
 	}
 
+	publisher := spec.PublisherOwnerID
+	if publisher == "" {
+		publisher = spec.TargetTraceOwnerID
+	}
+	for _, pinned := range []string{spec.TargetTraceOwnerID, publisher} {
+		if evicted, err := ownerPathEvictedTx(tx, pinned); err != nil {
+			return Frontier{}, AppendBatch{}, AppendReceipt{}, false, err
+		} else if evicted {
+			return Frontier{}, AppendBatch{}, AppendReceipt{}, false, &OwnerEvictedError{OwnerID: pinned}
+		}
+	}
+
 	through, err := s.readLatestFactOnPathTx(tx, spec.ThroughFactID, spec.TargetTraceOwnerID)
 	if err != nil {
 		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, err
@@ -129,10 +141,6 @@ func (s *SQLiteTraceStore) publishFrontierInTx(tx *sql.Tx, ctx OperationContext,
 		return Frontier{}, AppendBatch{}, AppendReceipt{}, false, &TraceStoreError{"owner cutoff target disagrees with through fact owner"}
 	}
 
-	publisher := spec.PublisherOwnerID
-	if publisher == "" {
-		publisher = spec.TargetTraceOwnerID
-	}
 	throughOrdinal := through.View.OwnerOrdinal
 	intent := spec.AppendIntentID
 	if intent == "" {
