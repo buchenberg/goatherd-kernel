@@ -47,6 +47,10 @@ type EvictionReceipt struct {
 	OwnerID            string
 	DeletedPathEntries int
 	DeletedFrontierIDs []string
+	// DeletedBlobs counts named blobs removed for the owner. Blob bytes can
+	// carry workspace contents, so they are deleted with the path rather
+	// than left for GC.
+	DeletedBlobs int
 }
 
 // GarbageReceipt reports what CollectGarbage reclaimed. SnapshotScan
@@ -107,11 +111,11 @@ func (s *SQLiteTraceStore) ownerPathEvictedTx(tx *sql.Tx, ownerID string) (bool,
 }
 
 // EvictOwnerPath removes an owner path's reachability: every path_entries
-// row with path_ref = ownerID, the owner_ordinals row, a tombstone marking
-// the path evicted, and — with the caller's ack — the frontier rows that
-// pin this path as target OR as publisher. The facts themselves are
-// untouched; garbage collection is a separate, explicit step. Evicting
-// the internal kernel:witness path is refused unconditionally.
+// row with path_ref = ownerID, the owner_ordinals row, the owner's named
+// blobs, a tombstone marking the path evicted, and — with the caller's ack —
+// the frontier rows that pin this path as target OR as publisher. The facts
+// themselves are untouched; garbage collection is a separate, explicit step.
+// Evicting the internal kernel:witness path is refused unconditionally.
 func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContext, ownerID string, ackDanglingFrontiers bool) (EvictionReceipt, error) {
 	opCtx := auth.ToOperationContext(OpEvict)
 	if err := ensureEvictionAuthorized(opCtx); err != nil {
@@ -197,6 +201,14 @@ func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContex
 	if _, err := tx.Exec("DELETE FROM owner_ordinals WHERE trace_owner_id = ?", ownerID); err != nil {
 		return EvictionReceipt{}, fmt.Errorf("delete owner ordinals: %w", err)
 	}
+	blobRes, err := tx.Exec("DELETE FROM named_blobs WHERE owner = ?", ownerID)
+	if err != nil {
+		return EvictionReceipt{}, fmt.Errorf("delete named blobs: %w", err)
+	}
+	deletedBlobs, err := blobRes.RowsAffected()
+	if err != nil {
+		return EvictionReceipt{}, fmt.Errorf("count deleted named blobs: %w", err)
+	}
 	for _, id := range pinnedFrontierIDs {
 		if _, err := tx.Exec("DELETE FROM frontiers WHERE frontier_id = ?", id); err != nil {
 			return EvictionReceipt{}, fmt.Errorf("delete acked frontier: %w", err)
@@ -213,6 +225,7 @@ func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContex
 		OwnerID:            ownerID,
 		DeletedPathEntries: int(deletedEntries),
 		DeletedFrontierIDs: pinnedFrontierIDs,
+		DeletedBlobs:       int(deletedBlobs),
 	}, nil
 }
 

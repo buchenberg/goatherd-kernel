@@ -62,6 +62,9 @@ type SQLiteTraceStore struct {
 	// checkpointBlobLimit bounds the caller snapshot bytes persisted per
 	// checkpoint (plan 05 §4). Zero means DefaultCheckpointBlobLimit.
 	checkpointBlobLimit int64
+	// blobLimit bounds one named blob written by PutBlob. Zero means
+	// DefaultBlobLimit.
+	blobLimit int64
 	// hasEvictedPaths records whether the evicted_paths table exists in
 	// this database, fixed once at open: createSchema always creates it on
 	// a read-write open, and the read-only opener verifies the schema. The

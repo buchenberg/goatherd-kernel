@@ -112,6 +112,11 @@ caller — a privacy flow — must be able to report *what happened*.
   v1.** They are scope-keyed, not owner-keyed; a scope-side checkpoint purge
   belongs to the caller that created them (same trust level, separate method
   when a consumer appears). They do participate in GC liveness, below.
+- **Named blobs (`named_blobs`) are in eviction scope.** They are owner-keyed
+  by construction (`PutBlob`'s `owner` is the trace owner id), and their bytes
+  may be workspace contents, so `EvictOwnerPath` deletes the owner's blobs in
+  the same transaction and reports the count as `DeletedBlobs`. Unlike
+  checkpoint snapshots there is no scope side to hand the purge to.
 
 ### GC liveness rules
 
@@ -138,6 +143,12 @@ A record is **live** iff any of:
    also happen to live on the dedicated `kernel:witness` owner path (rule 1);
    the rule here makes the protection explicit instead of incidental.
    `RootWitnessRecordID`'s record is live unconditionally.
+
+**Named blobs are not a liveness source.** `named_blobs` is opaque,
+caller-keyed storage: a record id that happens to appear in a blob's bytes
+does not keep that record live. A caller storing bytes that reference records
+must keep the referencing fact reachable through a normal path; the blob
+surface verifies digests, not semantics.
 
 Liveness is a fixpoint over `record_edges`/`caused_by_json` and `witness_ref`
 backward from the seeded live set (children and witnesses keep their
