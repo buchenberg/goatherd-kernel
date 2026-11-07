@@ -4,6 +4,25 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
+## [Unreleased]
+
+Named durable blobs for payloads that should not inline into the trace
+(execution snapshots, diffs, serialized workspaces). The three package
+functions `PutBlob`, `GetBlob`, and `DeleteBlob` address bytes by
+`(owner, kind, key)` and return a `sha256:` digest. Reads recompute and
+compare that digest (and the recorded size), failing with
+`ErrBlobDigestMismatch` and no data when a row is torn or edited; an absent
+address fails with `ErrBlobNotFound`. `PutBlob` refuses bytes over the
+store's limit (`WithBlobLimit`, default `DefaultBlobLimit` = 8 MiB) with
+`ErrBlobTooLarge` and never truncates. `EvictOwnerPath` deletes the owner's
+blobs in the same transaction and reports `EvictionReceipt.DeletedBlobs`; an
+owner holding only blobs is still evictable, and a tombstoned owner refuses
+new `PutBlob` calls with `ErrOwnerEvicted` so a privacy flow cannot be undone
+by a later write. Named blobs are storage, not a GC liveness source. `checkpoint_snapshots`
+stays a separate typed, single-use recovery row (see `blob.go` for why).
+The new table is gated by a `meta` schema marker so databases written before
+this change still open read-only.
+
 ## [v0.20.0] - 2026-11-05
 
 The first authorized deletion surface, per the owner-scoped eviction and

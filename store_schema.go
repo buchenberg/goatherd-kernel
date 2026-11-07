@@ -34,6 +34,12 @@ var expectedTables = []string{
 // the marker on every read-write open.
 const retentionSchemaMarkerKey = "schema:evicted_paths"
 
+// blobSchemaMarkerKey gates the named_blobs table requirement the same way:
+// a database written before named blobs has no marker and no table, and both
+// still open read-only. createSchema adds the marker on every read-write
+// open.
+const blobSchemaMarkerKey = "schema:named_blobs"
+
 // validateExistingSchema checks sqlite_master for the expected tables
 // without running any DDL. It is the read-only counterpart of createSchema:
 // the schema is verified, never created.
@@ -77,6 +83,17 @@ func (s *SQLiteTraceStore) validateExistingSchema() error {
 	}
 	if err == nil && !have["evicted_paths"] {
 		return fmt.Errorf("not a trace database: missing table: evicted_paths")
+	}
+
+	// Same version gate for named blobs: a pre-blob database carries no
+	// marker, so it opens without the table; once createSchema has run, the
+	// marker and table exist together.
+	err = s.db.QueryRow("SELECT value FROM meta WHERE key = ?", blobSchemaMarkerKey).Scan(&marker)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("read blob schema marker: %w", err)
+	}
+	if err == nil && !have["named_blobs"] {
+		return fmt.Errorf("not a trace database: missing table: named_blobs")
 	}
 	return nil
 }
@@ -185,10 +202,25 @@ func (s *SQLiteTraceStore) createSchema() error {
 			trace_owner_id TEXT PRIMARY KEY,
 			evicted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS named_blobs (
+			owner TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			key TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+			data BLOB NOT NULL,
+			created_at_unixnano INTEGER NOT NULL,
+			updated_at_unixnano INTEGER NOT NULL,
+			PRIMARY KEY (owner, kind, key)
+		);
 	`)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec("INSERT OR IGNORE INTO meta(key, value) VALUES (?, '1')", retentionSchemaMarkerKey)
+	if _, err := s.db.Exec("INSERT OR IGNORE INTO meta(key, value) VALUES (?, '1')", retentionSchemaMarkerKey); err != nil {
+		return err
+	}
+	_, err = s.db.Exec("INSERT OR IGNORE INTO meta(key, value) VALUES (?, '1')", blobSchemaMarkerKey)
 	return err
 }
