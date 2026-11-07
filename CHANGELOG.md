@@ -15,8 +15,10 @@ compare that digest (and the recorded size), failing with
 address fails with `ErrBlobNotFound`. `PutBlob` refuses bytes over the
 store's limit (`WithBlobLimit`, default `DefaultBlobLimit` = 8 MiB) with
 `ErrBlobTooLarge` and never truncates. `EvictOwnerPath` deletes the owner's
-blobs in the same transaction and reports `EvictionReceipt.DeletedBlobs`;
-named blobs are storage, not a GC liveness source. `checkpoint_snapshots`
+blobs in the same transaction and reports `EvictionReceipt.DeletedBlobs`; an
+owner holding only blobs is still evictable, and a tombstoned owner refuses
+new `PutBlob` calls with `ErrOwnerEvicted` so a privacy flow cannot be undone
+by a later write. Named blobs are storage, not a GC liveness source. `checkpoint_snapshots`
 stays a separate typed, single-use recovery row (see `blob.go` for why).
 The new table is gated by a `meta` schema marker so databases written before
 this change still open read-only.

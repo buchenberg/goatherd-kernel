@@ -227,6 +227,12 @@ func TestNamedBlobSchemaVersionGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read-only open of pre-blob schema: %v", err)
 	}
+	if _, _, err := GetBlob(context.Background(), viewer, "owner:a", "diff", "k"); !errors.Is(err, ErrBlobNotFound) {
+		t.Errorf("GetBlob on a pre-blob database: want ErrBlobNotFound, got %v", err)
+	}
+	if err := DeleteBlob(context.Background(), viewer, "owner:a", "diff", "k"); err != nil {
+		t.Errorf("DeleteBlob on a pre-blob database: %v", err)
+	}
 	if err := viewer.Close(context.Background()); err != nil {
 		t.Fatalf("close viewer: %v", err)
 	}
@@ -275,6 +281,46 @@ func TestNamedBlobReadOnlyStore(t *testing.T) {
 	}
 	if _, err := PutBlob(context.Background(), viewer, "owner:a", "snapshot", "k", []byte("more")); err == nil {
 		t.Error("PutBlob on a read-only store succeeded, want a write refusal")
+	}
+}
+
+func TestEvictOwnerPathAcceptsBlobOnlyOwner(t *testing.T) {
+	store := newMemStore(t)
+	ctx := context.Background()
+	if _, err := PutBlob(ctx, store, "owner:blobs-only", "snapshot", "k", []byte("bytes")); err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+
+	receipt, err := store.EvictOwnerPath(ctx, trustedAppend, "owner:blobs-only", false)
+	if err != nil {
+		t.Fatalf("EvictOwnerPath on a blob-only owner: %v", err)
+	}
+	if receipt.DeletedBlobs != 1 {
+		t.Errorf("DeletedBlobs = %d, want 1", receipt.DeletedBlobs)
+	}
+	if _, _, err := GetBlob(ctx, store, "owner:blobs-only", "snapshot", "k"); !errors.Is(err, ErrBlobNotFound) {
+		t.Errorf("blob survived eviction: %v", err)
+	}
+	// The tombstone is written, so a second eviction is refused rather than
+	// re-deleting.
+	if _, err := store.EvictOwnerPath(ctx, trustedAppend, "owner:blobs-only", false); !errors.Is(err, ErrOwnerEvicted) {
+		t.Errorf("second eviction: want ErrOwnerEvicted, got %v", err)
+	}
+}
+
+func TestPutBlobRefusesEvictedOwner(t *testing.T) {
+	store := newMemStore(t)
+	ctx := context.Background()
+	appendDrafts(t, store, "intent:put-evict", "owner:put-evict", draft("step", Capture, nil))
+	if _, err := store.EvictOwnerPath(ctx, trustedAppend, "owner:put-evict", false); err != nil {
+		t.Fatalf("EvictOwnerPath: %v", err)
+	}
+
+	if _, err := PutBlob(ctx, store, "owner:put-evict", "snapshot", "k", []byte("bytes")); !errors.Is(err, ErrOwnerEvicted) {
+		t.Fatalf("PutBlob on an evicted owner: want ErrOwnerEvicted, got %v", err)
+	}
+	if _, _, err := GetBlob(ctx, store, "owner:put-evict", "snapshot", "k"); !errors.Is(err, ErrBlobNotFound) {
+		t.Errorf("refused PutBlob left bytes behind: %v", err)
 	}
 }
 

@@ -115,8 +115,11 @@ caller — a privacy flow — must be able to report *what happened*.
 - **Named blobs (`named_blobs`) are in eviction scope.** They are owner-keyed
   by construction (`PutBlob`'s `owner` is the trace owner id), and their bytes
   may be workspace contents, so `EvictOwnerPath` deletes the owner's blobs in
-  the same transaction and reports the count as `DeletedBlobs`. Unlike
-  checkpoint snapshots there is no scope side to hand the purge to.
+  the same transaction and reports the count as `DeletedBlobs`. An owner that
+  holds only blobs (no path entries or ordinal row) is still evictable, and a
+  tombstoned owner refuses new `PutBlob` calls with `ErrOwnerEvicted`, so the
+  privacy flow cannot be undone by a later write. Unlike checkpoint snapshots
+  there is no scope side to hand the purge to.
 
 ### GC liveness rules
 

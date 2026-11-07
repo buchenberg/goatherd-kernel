@@ -80,10 +80,15 @@ func BlobLimitOrDefault(store *SQLiteTraceStore) int64 {
 // eviction can reach the bytes. kind names the payload's role (for example a
 // sealed snapshot or a diff), and key distinguishes blobs of that kind.
 // Data whose length exceeds the store's blob limit fails with ErrBlobTooLarge
-// and leaves any existing blob untouched.
+// and leaves any existing blob untouched. An owner with an eviction tombstone
+// refuses new blobs with ErrOwnerEvicted, so a privacy flow cannot be undone
+// by a later put.
 func PutBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key string, data []byte) (string, error) {
 	if err := validateBlobAddress(owner, kind, key); err != nil {
 		return "", err
+	}
+	if !store.hasNamedBlobs {
+		return "", fmt.Errorf("blob %s/%s/%s: store has no named_blobs table; reopen read-write to create the schema", owner, kind, key)
 	}
 	if limit := BlobLimitOrDefault(store); int64(len(data)) > limit {
 		return "", fmt.Errorf("blob %s/%s/%s: %d bytes over the store's %d-byte blob limit; externalize the payload or raise WithBlobLimit: %w",
@@ -96,7 +101,23 @@ func PutBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key str
 	}
 	digest := blobDigest(data)
 	now := time.Now().UnixNano()
-	_, err := store.db.ExecContext(gctx, `
+
+	// An evicted owner takes no new blobs: the tombstone is a privacy
+	// boundary, and re-creating bytes under it would leave data that the
+	// eviction surface (which refuses an already-evicted owner) can never
+	// remove again. The check and the write share one transaction so an
+	// eviction cannot slip between them.
+	tx, err := store.db.BeginTx(gctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin blob transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if evicted, err := ownerEvicted(store.hasEvictedPaths, tx, owner); err != nil {
+		return "", fmt.Errorf("check blob owner %s: %w", owner, err)
+	} else if evicted {
+		return "", &OwnerEvictedError{OwnerID: owner}
+	}
+	if _, err := tx.ExecContext(gctx, `
 		INSERT INTO named_blobs
 		(owner, kind, key, digest, size_bytes, data, created_at_unixnano, updated_at_unixnano)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -105,9 +126,11 @@ func PutBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key str
 			size_bytes = excluded.size_bytes,
 			data = excluded.data,
 			updated_at_unixnano = excluded.updated_at_unixnano`,
-		owner, kind, key, digest, int64(len(data)), data, now, now)
-	if err != nil {
+		owner, kind, key, digest, int64(len(data)), data, now, now); err != nil {
 		return "", fmt.Errorf("put blob %s/%s/%s: %w", owner, kind, key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit blob %s/%s/%s: %w", owner, kind, key, err)
 	}
 	return digest, nil
 }
@@ -119,6 +142,11 @@ func PutBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key str
 func GetBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key string) ([]byte, string, error) {
 	if err := validateBlobAddress(owner, kind, key); err != nil {
 		return nil, "", err
+	}
+	if !store.hasNamedBlobs {
+		// A pre-blob database predates the surface; the only honest answer
+		// is that the address holds nothing, not a raw "no such table".
+		return nil, "", fmt.Errorf("blob %s/%s/%s: %w", owner, kind, key, ErrBlobNotFound)
 	}
 	var digest string
 	var size int64
@@ -149,6 +177,9 @@ func GetBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key str
 func DeleteBlob(gctx context.Context, store *SQLiteTraceStore, owner, kind, key string) error {
 	if err := validateBlobAddress(owner, kind, key); err != nil {
 		return err
+	}
+	if !store.hasNamedBlobs {
+		return nil
 	}
 	if _, err := store.db.ExecContext(gctx,
 		`DELETE FROM named_blobs WHERE owner = ? AND kind = ? AND key = ?`,

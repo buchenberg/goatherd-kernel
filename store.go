@@ -70,6 +70,11 @@ type SQLiteTraceStore struct {
 	// a read-write open, and the read-only opener verifies the schema. The
 	// tombstone probe uses it to skip the sqlite_master check on hot paths.
 	hasEvictedPaths bool
+	// hasNamedBlobs records whether the named_blobs table exists, fixed at
+	// open. A database written before named blobs opens read-only without
+	// it (behind the schema marker gate); blob reads then report absence
+	// rather than a raw "no such table" store fault.
+	hasNamedBlobs bool
 }
 
 // WithBus attaches an effect bus to the store. When set, every successful
@@ -132,7 +137,7 @@ func NewSQLiteTraceStore(path string) (*SQLiteTraceStore, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	s := &SQLiteTraceStore{path: path, db: db, hasEvictedPaths: true}
+	s := &SQLiteTraceStore{path: path, db: db, hasEvictedPaths: true, hasNamedBlobs: true}
 	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -183,6 +188,11 @@ func OpenSQLiteTraceStoreReadOnly(path string) (*SQLiteTraceStore, error) {
 	var present int
 	if err := s.db.QueryRow("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evicted_paths'").Scan(&present); err == nil {
 		s.hasEvictedPaths = true
+	}
+	// A pre-blob database has no named_blobs table. Blob reads then report
+	// absence instead of a raw SQL fault; writes still fail as read-only.
+	if err := s.db.QueryRow("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'named_blobs'").Scan(&present); err == nil {
+		s.hasNamedBlobs = true
 	}
 	return s, nil
 }

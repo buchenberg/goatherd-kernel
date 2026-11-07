@@ -143,9 +143,10 @@ func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContex
 		return EvictionReceipt{}, &OwnerEvictedError{OwnerID: ownerID}
 	}
 
-	// A path with neither entries nor an ordinal row has nothing to evict;
-	// an unknown path must not gain a tombstone, or a typo would blacklist
-	// a path that never existed.
+	// An unknown path must not gain a tombstone, or a typo would blacklist a
+	// path that never existed. An owner that holds only named blobs is not
+	// unknown, though: its bytes (potentially workspace contents) must still
+	// be deletable by a privacy flow.
 	var entryCount int
 	if err := tx.QueryRow("SELECT COUNT(*) FROM path_entries WHERE path_ref = ?", ownerID).Scan(&entryCount); err != nil {
 		return EvictionReceipt{}, fmt.Errorf("count path entries: %w", err)
@@ -154,7 +155,11 @@ func (s *SQLiteTraceStore) EvictOwnerPath(ctx context.Context, auth AppendContex
 	if err := tx.QueryRow("SELECT COUNT(*) FROM owner_ordinals WHERE trace_owner_id = ?", ownerID).Scan(&ordinalCount); err != nil {
 		return EvictionReceipt{}, fmt.Errorf("count owner ordinals: %w", err)
 	}
-	if entryCount == 0 && ordinalCount == 0 {
+	var blobCount int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM named_blobs WHERE owner = ?", ownerID).Scan(&blobCount); err != nil {
+		return EvictionReceipt{}, fmt.Errorf("count named blobs: %w", err)
+	}
+	if entryCount == 0 && ordinalCount == 0 && blobCount == 0 {
 		return EvictionReceipt{}, &TraceStoreError{fmt.Sprintf("no such owner path: %s", ownerID)}
 	}
 

@@ -214,8 +214,6 @@ func (s *SQLiteTraceStore) createSchema() error {
 			updated_at_unixnano INTEGER NOT NULL,
 			PRIMARY KEY (owner, kind, key)
 		);
-
-		CREATE INDEX IF NOT EXISTS idx_named_blobs_owner ON named_blobs(owner);
 	`)
 	if err != nil {
 		return err
