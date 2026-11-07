@@ -4,7 +4,7 @@ Notable changes to `shepherd-kernel-go`. This project follows
 [Semantic Versioning](https://semver.org/); while pre-1.0, minor releases may
 contain breaking changes, which are called out below.
 
-## [Unreleased]
+## [v0.21.0] - 2026-11-06
 
 Named durable blobs for payloads that should not inline into the trace
 (execution snapshots, diffs, serialized workspaces). The three package
@@ -18,8 +18,9 @@ store's limit (`WithBlobLimit`, default `DefaultBlobLimit` = 8 MiB) with
 blobs in the same transaction and reports `EvictionReceipt.DeletedBlobs`; an
 owner holding only blobs is still evictable, and a tombstoned owner refuses
 new `PutBlob` calls with `ErrOwnerEvicted` so a privacy flow cannot be undone
-by a later write. Named blobs are storage, not a GC liveness source. `checkpoint_snapshots`
-stays a separate typed, single-use recovery row (see `blob.go` for why).
+by a later write. Named blobs are storage, not a GC liveness source.
+`checkpoint_snapshots` stays a separate typed, single-use recovery row (see
+`blob.go` for why).
 The new table is gated by a `meta` schema marker so databases written before
 this change still open read-only.
 
