@@ -4,7 +4,8 @@ Go implementation of the [Shepherd](https://arxiv.org/abs/2605.10913) trace kern
 
 > **Module scope.** This module is the **kernel**: the record model, canonical JSON, the SQLite store, the effect bus, and the execution/history projections. The trace package is the **module root** — `import "github.com/buchenberg/goatherd-kernel"` is package `trace` — with `traceui` (the read-only HTTP projection) and `testkit` (shared test support) as subpackages.
 >
-> The **runtime layer** — the scope tree, merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine — lives in [`github.com/buchenberg/shepherd-runtime-go`](https://github.com/buchenberg/shepherd-runtime-go), which composes this module. See that README for branching, workspace capture/restore, supervision, and task execution.
+> The **runtime layer** — the scope tree, merge gate, settlement and recovery, the sandbox backends, the substrate/materialize layer, the task runtime, and the supervision rules engine — lives in [`github.com/buchenberg/goatherd-runtime-go`](https://github.com/buchenberg/goatherd-runtime-go), which composes this module. See that README for branching, workspace capture/restore, supervision, and task execution.
+> The entire Goatherd stack is used in the [`yaah`](https://github.com/buchenberg/yaah) agent harness
 
 ## What It Is
 
